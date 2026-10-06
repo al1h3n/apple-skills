@@ -1,0 +1,17 @@
+{
+  "$schema": "https://skills.sh/schemas/skills.sh.schema.json",
+  "notGrouped": "bottom",
+  "groupings": [
+    {
+      "title": "Apple Design System",
+      "description": "Skills for Apple Human Interface Guidelines, iOS interface design, and Liquid Glass materials.",
+      "skills": [
+        "liquid-glass",
+        "ios",
+        "apple-ui",
+        "liquid-glass-skill",
+        "apple-ui-skill"
+      ]
+    }
+  ]
+}
