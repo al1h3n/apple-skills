@@ -66,7 +66,7 @@ container, which merges them and renders them in one pass.
 Unavoidable stacking (a sheet over a toolbar):
 - the upper glass must be Regular;
 - it must sample the *rendered* lower glass, which Liquid Rust does by rebuilding the backdrop only
-  where the layers overlap.
+  where the layers overlap (or, with `scene.glass_on_glass = false`, covers it the way Apple does).
 
 ## Non-negotiables for an Apple-grade look
 
@@ -104,12 +104,13 @@ GlassEffectContainer(spacing: 16) {
 // Liquid Rust (native or wasm)
 let bar = scene.add_container(14.0, 0);
 scene.add(Glass::new(Rect::new(24.0, 24.0, 52.0, 52.0)).interactive().container(bar));
+scene.add(Glass::new(Rect::new(300.0, 24.0, 110.0, 52.0)).material(Material::tinted(Color::BLUE)).interactive().container(bar)); // stays tinted when fused
 if scene.update(dt) { /* keep requesting frames */ }
 renderer.render(&device, &queue, &mut encoder, &Frame { content, target, size, scale, content_changed }, &scene);
 ```
 
 ```js
-// Web via wasm (LiquidRust/web)
+// Web via wasm (liquid-rust/web)
 const glass = await LiquidGlass.create(canvas, imageBitmap, devicePixelRatio);
 glass.add(24, 24, 52, 52, -1, "regular", 0, true, false, -1, 0);
 ```
@@ -122,6 +123,6 @@ glass.add(24, 24, 52, 52, -1, "regular", 0, true, false, -1, 0);
 - `references/shader-math.md`: the full algorithm with calibration constants and a bug table
 - `references/webgpu.md`: browser paths, backdrop capture (HTML-in-Canvas), buffer layouts, CSS fallback
 - `references/motion.md`: the spring maths (copy-ready), choreography values, frame pacing
-- `references/liquid-rust.md`: engine API, recipes, what it fixes vs naive copies
+- `references/liquid-rust.md`: engine API (crate 0.2.5), behaviour changes, recipes, what it fixes vs naive copies
 - `references/sources.md`: what each claim rests on
-- `assets/glass.wgsl`, `assets/pyramid.wgsl`: tested shaders (WebGPU / wgpu)
+- `assets/glass.wgsl`, `assets/pyramid.wgsl`: tested shaders (WebGPU / wgpu), synced with liquid-rust 0.2.5

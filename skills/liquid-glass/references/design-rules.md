@@ -89,7 +89,10 @@ content, like stained glass.
 
 Liquid Rust implements the unavoidable case correctly: each z-layer samples a backdrop that
 includes lower glass, and the backdrop is rebuilt **only** for the screen region where the
-upper layer overlaps lower glass (see `liquid-rust.md`).
+upper layer overlaps lower glass. `scene.glass_on_glass = false` follows Apple's stricter rule
+instead (each layer refracts only the content and covers the glass below). Fused glass in one
+container keeps each member's own material, so a tinted primary button can share a liquid
+body with plain ones (see `liquid-rust.md`).
 
 ## 4. Where glass belongs
 
@@ -125,7 +128,7 @@ upper layer overlaps lower glass (see `liquid-rust.md`).
 | Reduce Transparency | frostier, obscures more content | frost ×3, face opacity → high, refraction ↓ |
 | Increase Contrast | elements mostly black/white with a contrasting border | flatten tint, add 1 pt border in label colour |
 | Reduce Motion | lower intensity, **no elastic** properties | springs critically damped (bounce 0), no stretch, no press scale |
-| Transparency slider (27) | ultra clear → fully tinted | expose 0…1 knob mapped to frost + face opacity |
+| Transparency slider (27) | ultra clear → fully tinted | expose 0…1 knob mapped to frost + face opacity; tinted = near-black (`#1C1C1E`) or white faces, never mid grey |
 | Web | — | `prefers-reduced-transparency`, `prefers-contrast`, `prefers-reduced-motion` |
 
 ## 7. Motion rules (summary — details in `motion.md`)
