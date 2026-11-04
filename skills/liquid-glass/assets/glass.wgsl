@@ -1,5 +1,6 @@
 // Liquid Glass surface. One instanced quad per glass group; the group's shapes are
-// smooth-unioned into one signed distance field, so neighbours fuse like liquid.
+// smooth-unioned into one signed distance field, so neighbours fuse like liquid. Each shape
+// brings its own material, blended across the liquid neck with the same weights.
 //
 // Per pixel, in Apple's kit order:
 //   backdrop -> refraction (squircle bevel, Snell) + dispersion + frost (pyramid)
@@ -19,13 +20,18 @@ struct Shape {
     center_half: vec4f, // center (px), half size (px)
     params: vec4f,      // corner radius, inward shrink, stretch axis (x, y)
     stretch: vec4f,     // scale along axis, scale across axis, corner exponent, unused
+    extra: vec4f,       // bevel depth (px), unused, unused, unused
 };
 
 struct Group {
     bounds: vec4f,      // quad: min (px), max (px)
-    info: vec4u,        // first shape, shape count, unused, unused
-    geo: vec4f,         // union radius k (px), presence, press, light/dark adaptivity
-    optics: vec4f,      // refraction, depth (px), dispersion, frost sigma (px)
+    info: vec4u,        // first shape, shape count, 1 = members' materials differ (blend them), unused
+    geo: vec4f,         // union radius k (px), presence, press, unused
+};
+
+// One per shape (same index), resolved for that shape's own size.
+struct Material {
+    optics: vec4f,      // refraction, light/dark adaptivity, dispersion, frost sigma (px)
     lighting: vec4f,    // splay, specular, rim, rim shade
     edge: vec4f,        // inner hairline, outer edge burn, contrast border, dim
     shadow: vec4f,      // offset y (px), sigma (px), opacity, unused
@@ -42,6 +48,7 @@ struct Group {
 @group(0) @binding(3) var samp: sampler;
 @group(0) @binding(4) var src: texture_2d<f32>;
 @group(0) @binding(5) var pyr: texture_2d<f32>;
+@group(0) @binding(6) var<storage, read> materials: array<Material>;
 
 const ETA: f32 = 1.5;               // index of refraction of the virtual glass
 const KIT_OFFSET: f32 = 40.0;       // Figma inner-shadow offset/spread in the kit (pt)
@@ -93,7 +100,8 @@ fn sdg_rrect(p: vec2f, half: vec2f, r: f32, n: f32, soft: f32) -> vec3f {
     return vec3f(g - r, sg * normalize(e));
 }
 
-fn sdg_shape(p: vec2f, s: Shape, soft: f32) -> vec3f {
+fn sdg_shape(p: vec2f, s: Shape) -> vec3f {
+    let soft = s.extra.x * 0.35;
     let axis = s.params.zw;
     let across = vec2f(-axis.y, axis.x);
     let rel = p - s.center_half.xy;
@@ -105,23 +113,58 @@ fn sdg_shape(p: vec2f, s: Shape, soft: f32) -> vec3f {
     return vec3f(dg.x * m + s.params.y, grad);
 }
 
-// Quadratic smooth minimum carrying the gradient (Inigo Quilez).
-fn smin_g(a: vec3f, b: vec3f, k: f32) -> vec3f {
+// Quadratic smooth minimum (Inigo Quilez): the blended distance, and how much of `b`
+// to mix into anything carried along with it.
+fn smin_w(a: f32, b: f32, k: f32) -> vec2f {
     if k <= 0.0 {
-        return select(b, a, a.x < b.x);
+        return vec2f(min(a, b), select(1.0, 0.0, a < b));
     }
-    let h = max(k - abs(a.x - b.x), 0.0);
-    let m = 0.25 * h * h / k;
+    let h = max(k - abs(a - b), 0.0);
     let n = 0.5 * h / k;
-    return vec3f(min(a.x, b.x) - m, mix(a.yz, b.yz, select(1.0 - n, n, a.x < b.x)));
+    return vec2f(min(a, b) - 0.25 * h * h / k, select(1.0 - n, n, a < b));
 }
 
-fn sdg_group(p: vec2f, grp: Group, soft: f32) -> vec3f {
-    var acc = sdg_shape(p, shapes[grp.info.x], soft);
+fn sdg_group(p: vec2f, grp: Group) -> vec3f {
+    var acc = sdg_shape(p, shapes[grp.info.x]);
     for (var i = 1u; i < grp.info.y; i++) {
-        acc = smin_g(acc, sdg_shape(p, shapes[grp.info.x + i], soft), grp.geo.x);
+        let b = sdg_shape(p, shapes[grp.info.x + i]);
+        let w = smin_w(acc.x, b.x, grp.geo.x);
+        acc = vec3f(w.x, mix(acc.yz, b.yz, w.y));
     }
     return acc;
+}
+
+struct Field {
+    dg: vec3f,    // distance and normal, as sdg_group
+    attrs: vec3f, // bevel depth (px) and centre (px), blended as the shapes fuse
+    mat: Material, // material, blended the same way
+};
+
+fn mix_material(a: Material, b: Material, t: f32) -> Material {
+    return Material(mix(a.optics, b.optics, t), mix(a.lighting, b.lighting, t), mix(a.edge, b.edge, t), mix(a.shadow, b.shadow, t),
+        mix(a.light_a, b.light_a, t), mix(a.light_b, b.light_b, t), mix(a.dark_a, b.dark_a, t), mix(a.dark_b, b.dark_b, t),
+        mix(a.tint, b.tint, t));
+}
+
+fn field_group(p: vec2f, grp: Group) -> Field {
+    let first = shapes[grp.info.x];
+    var dg = sdg_shape(p, first);
+    var attrs = vec3f(first.extra.x, first.center_half.xy);
+    var mat = materials[grp.info.x];
+    // Same for every pixel of the quad, so the branch costs nothing; a row of equal buttons
+    // skips the material loads entirely.
+    let blend = grp.info.z != 0u;
+    for (var i = 1u; i < grp.info.y; i++) {
+        let s = shapes[grp.info.x + i];
+        let b = sdg_shape(p, s);
+        let w = smin_w(dg.x, b.x, grp.geo.x);
+        dg = vec3f(w.x, mix(dg.yz, b.yz, w.y));
+        attrs = mix(attrs, vec3f(s.extra.x, s.center_half.xy), w.y);
+        if blend {
+            mat = mix_material(mat, materials[grp.info.x + i], w.y);
+        }
+    }
+    return Field(dg, attrs, mat);
 }
 
 // ---------------------------------------------------------------- maths helpers
@@ -256,15 +299,16 @@ fn bevel_slope(t: f32) -> f32 {
 // Lateral travel (in units of glass thickness) of a vertical ray refracted by a
 // surface tilted by atan(slope).
 fn refract_offset(slope: f32, eta: f32) -> f32 {
-    let s = slope / sqrt(1.0 + slope * slope);
-    let theta = asin(s);
-    return tan(theta - asin(s / eta));
+    // atan, not asin(slope / sqrt(1 + slope²)): at the very edge the slope is ~5600 and
+    // that ratio can round above 1, which made asin NaN and left black pixels on the rim.
+    let theta = atan(slope);
+    return tan(theta - asin(clamp(sin(theta) / eta, -1.0, 1.0)));
 }
 
 // Inner shadow in Figma's sense: present where the shape is not covered by itself
 // shifted by `offset` and grown by `grow`, blurred by `sigma`.
-fn inner_shadow(p: vec2f, grp: Group, offset: vec2f, grow: f32, sigma: f32, soft: f32) -> f32 {
-    let hole = sdg_group(p - offset, grp, soft).x - grow;
+fn inner_shadow(p: vec2f, grp: Group, offset: vec2f, grow: f32, sigma: f32) -> f32 {
+    let hole = sdg_group(p - offset, grp).x - grow;
     return phi(hole, sigma);
 }
 
@@ -272,18 +316,19 @@ fn inner_shadow(p: vec2f, grp: Group, offset: vec2f, grow: f32, sigma: f32, soft
 
 @fragment
 fn fs_glass(v: Varyings) -> @location(0) vec4f {
-    let grp = groups[v.group];
     let p = v.pos.xy;
     let pt = globals.misc.x;
-    let depth = max(grp.optics.y, 1.0);
-    let soft = depth * 0.35;
+    let grp = groups[v.group];
+    let field = field_group(p, grp);
+    let mat = field.mat;
+    let depth = max(field.attrs.x, 1.0);
 
-    let dg = sdg_group(p, grp, soft);
+    let dg = field.dg;
     let glen = max(length(dg.yz), 1e-3);
     let d = dg.x / glen;
     let n = dg.yz / glen;
     let cov = coverage(d);
-    let center_uv = (grp.bounds.xy + grp.bounds.zw) * 0.5 * globals.viewport.zw;
+    let center_uv = field.attrs.yz * globals.viewport.zw;
 
     // Outside: drop shadow and the darkened hairline edge.
     var dark = 0.0;
@@ -294,20 +339,28 @@ fn fs_glass(v: Varyings) -> @location(0) vec4f {
         // Apple: shadows grow over busy content (text), fade over flat light content.
         let adapt = mix(0.7, 1.6, smoothstep(0.02, 0.12, detail)) * mix(1.0, 0.65, smoothstep(0.5, 0.85, mean));
         var shadow = 0.0;
-        if grp.shadow.z > 0.0 {
-            let shadow_d = sdg_group(p - vec2f(0.0, grp.shadow.x), grp, soft).x;
-            shadow = grp.shadow.z * adapt * (1.0 - phi(shadow_d, grp.shadow.y));
+        if mat.shadow.z > 0.0 {
+            let shadow_d = sdg_group(p - vec2f(0.0, mat.shadow.x), grp).x;
+            shadow = mat.shadow.z * adapt * (1.0 - phi(shadow_d, mat.shadow.y));
         }
 
         var edge_dark = 0.0;
-        if grp.edge.y > 0.0 && d < 2.0 * pt {
-            let ring = clamp(coverage(d - 0.5 * pt) - cov, 0.0, 1.0);
-            let side_l = coverage(sdg_group(p + vec2f(1.25 * pt, 0.0), grp, soft).x + 0.75 * pt);
-            let side_r = coverage(sdg_group(p - vec2f(1.25 * pt, 0.0), grp, soft).x + 0.75 * pt);
-            let burn = grp.edge.y * (ring + 0.92 * max(side_l, side_r) * (1.0 - cov));
+        if mat.edge.y > 0.0 && d < 2.5 * pt {
+            // At least one device pixel wide: a thinner line can't antialias and turns into
+            // a staircase of dark pixels on 1x screens.
+            let line_w = max(0.5 * pt, 1.0);
+            let grow = max(0.75 * pt, 1.0);
+            let ring = clamp(coverage(d - line_w) - cov, 0.0, 1.0);
+            let side_l = coverage(sdg_group(p + vec2f(1.25 * pt, 0.0), grp).x + grow);
+            let side_r = coverage(sdg_group(p - vec2f(1.25 * pt, 0.0), grp).x + grow);
+            let burn = mat.edge.y * (ring + 0.92 * max(side_l, side_r) * (1.0 - cov));
             let under = encode(textureLoad(src, vec2i(p), 0).rgb);
             let burnt = max(under - vec3f(burn), vec3f(0.0));
-            edge_dark = 1.0 - luminance(decode(burnt)) / max(luminance(decode(under)), 1e-4);
+            let darkening = 1.0 - luminance(decode(burnt)) / max(luminance(decode(under)), 1e-4);
+            // The kit's linear burn defines the edge over light content. Over dark content a
+            // fixed burn clips to pure black (a jagged black outline), so the darkening is
+            // capped and fades out where there is nothing light to define the edge against.
+            edge_dark = min(darkening, 0.45) * smoothstep(0.12, 0.45, luminance(under));
         }
         dark = 1.0 - (1.0 - clamp(shadow, 0.0, 1.0)) * (1.0 - clamp(edge_dark, 0.0, 1.0));
         dark *= 1.0 - cov;
@@ -318,12 +371,12 @@ fn fs_glass(v: Varyings) -> @location(0) vec4f {
 
     // Refraction through the squircle bevel, per channel for dispersion.
     let t = clamp(-d / depth, 0.0, 1.0);
-    let sigma = grp.optics.w;
+    let sigma = mat.optics.w;
     var col: vec3f;
-    if t < 1.0 && grp.optics.x > 0.0 {
+    if t < 1.0 && mat.optics.x > 0.0 {
         let slope = bevel_slope(t);
-        let reach = grp.optics.x * depth;
-        let disp = grp.optics.z * 0.25;
+        let reach = mat.optics.x * depth;
+        let disp = mat.optics.z * 0.25;
         let off_g = reach * refract_offset(slope, ETA);
         if disp > 0.0 {
             let off_r = reach * refract_offset(slope, ETA - disp);
@@ -335,21 +388,28 @@ fn fs_glass(v: Varyings) -> @location(0) vec4f {
     } else {
         col = frost(p, sigma);
     }
-    col *= 1.0 - grp.edge.w;
+    col *= 1.0 - mat.edge.w;
 
     // Tone mapping: light and dark faces, chosen by scheme or by the backdrop.
     var g = encode(col);
     let top = max(globals.misc.y - 1.0, 0.0);
     let bg = luminance(encode(textureSampleLevel(pyr, samp, center_uv, top).rgb));
-    // Biased toward light: small glass only turns dark over genuinely dark content.
-    let lightness = mix(globals.misc.z, smoothstep(0.26, 0.46, bg), grp.geo.w);
-    g = mix(tone(g, grp.dark_a, grp.dark_b), tone(g, grp.light_a, grp.light_b), lightness);
+    // Small glass (adaptivity 1) flips at a backdrop of ~0.36, biased toward light: it only
+    // turns dark over genuinely dark content. Larger glass needs ever more contrasting content
+    // to flip, until (adaptivity 0) it never does and follows the scheme. Moving the threshold,
+    // rather than blending scheme and content by adaptivity, keeps the face fully light or
+    // fully dark: a 50/50 blend of the two faces is the flat grey Apple's glass never shows.
+    let scheme_edge = select(1.2, -0.2, globals.misc.z > 0.5);
+    let flip = mix(scheme_edge, 0.36, mat.optics.y);
+    // Narrow, so content only briefly sits in between, where the faces blend toward grey.
+    let lightness = smoothstep(flip - 0.06, flip + 0.06, bg);
+    g = mix(tone(g, mat.dark_a, mat.dark_b), tone(g, mat.light_a, mat.light_b), lightness);
 
     // Stained-glass tint: keep hue and chroma, let lightness follow the backdrop.
-    if grp.tint.w > 0.0 {
+    if mat.tint.w > 0.0 {
         let lab = oklab(decode(g));
-        let l = clamp(grp.tint.x + (lab.x - 0.65) * 0.6, 0.15, 0.97);
-        g = mix(g, encode(oklab_to_linear(vec3f(l, grp.tint.y, grp.tint.z))), grp.tint.w);
+        let l = clamp(mat.tint.x + (lab.x - 0.65) * 0.6, 0.15, 0.97);
+        g = mix(g, encode(oklab_to_linear(vec3f(l, mat.tint.y, mat.tint.z))), mat.tint.w);
     }
 
     // Light: a crisp line just inside the edge, brightest facing the light, weaker on
@@ -358,46 +418,55 @@ fn fs_glass(v: Varyings) -> @location(0) vec4f {
     // (CoreAnimation's vibrantColorMatrix), so it picks up the backdrop's colour.
     let to_light = globals.light.xy;
     let facing = dot(n, to_light);
-    let splay = grp.lighting.x;
+    let splay = mat.lighting.x;
     let lit = splay + (1.0 - splay) * pow(max(facing, 0.0), 2.0);
     let back = splay + (0.4 - splay) * pow(max(-facing, 0.0), 2.0);
     let dir = select(back, lit, facing > 0.0);
     let line = exp(d / (0.25 * pt * (1.0 + splay)));
     let vivid = vec3f(blend_lum(g)) + (g - vec3f(blend_lum(g))) * 2.2;
     let highlight = vivid * 1.45 + vec3f(0.05);
-    g = mix(g, highlight, clamp(line * dir * grp.lighting.y * 2.5, 0.0, 1.0));
+    g = mix(g, highlight, clamp(line * dir * mat.lighting.y * 2.5, 0.0, 1.0));
 
     // Inner shadows from the kit, skipped deep inside where they vanish.
     let rim_sigma = 5.0 * pt;
     if -d < 45.0 * pt {
         let o = KIT_OFFSET * pt;
         let away = -to_light * o; // shadow offset that lights the edge facing the light
-        if grp.lighting.z > 0.0 {
-            let rims = inner_shadow(p, grp, away, o, rim_sigma, soft) + inner_shadow(p, grp, -away, o, rim_sigma, soft);
-            g += vec3f(grp.lighting.z * rims);
+        if mat.lighting.z > 0.0 {
+            let rims = inner_shadow(p, grp, away, o, rim_sigma) + inner_shadow(p, grp, -away, o, rim_sigma);
+            g += vec3f(mat.lighting.z * rims);
         }
-        if grp.lighting.w > 0.0 {
-            g -= vec3f(grp.lighting.w * inner_shadow(p, grp, away, o, 15.0 * pt, soft));
+        if mat.lighting.w > 0.0 {
+            g -= vec3f(mat.lighting.w * inner_shadow(p, grp, away, o, 15.0 * pt));
         }
-        if grp.edge.x > 0.0 {
+        if mat.edge.x > 0.0 {
             let h = -to_light * 1.25 * pt;
-            let lines = inner_shadow(p, grp, h, 0.0, 0.125 * pt, soft) + inner_shadow(p, grp, -h, 0.0, 0.125 * pt, soft);
-            g += vec3f(grp.edge.x * lines);
+            let lines = inner_shadow(p, grp, h, 0.0, 0.125 * pt) + inner_shadow(p, grp, -h, 0.0, 0.125 * pt);
+            g += vec3f(mat.edge.x * lines);
         }
     }
 
     // Touch: the glass lights up from the finger; the light spills onto nearby glass.
     let tp = p - globals.touch.xy;
-    let glow = globals.touch.w * exp(-dot(tp, tp) / max(globals.touch.z * globals.touch.z, 1.0));
-    g += vec3f(0.22 * glow + 0.03 * grp.geo.z);
+    // Glass that isn't pressed only catches a little of it, so a held button doesn't outline
+    // the panels around it.
+    let spill = 0.25 + 0.75 * clamp(grp.geo.z, 0.0, 1.0);
+    let glow = spill * globals.touch.w * exp(-dot(tp, tp) / max(globals.touch.z * globals.touch.z, 1.0));
+    // Screen blend: light only fills the headroom that is left, so over light content
+    // the glass brightens a little instead of clipping to an opaque white disc, while
+    // over dark content it keeps nearly the full lift.
+    g += vec3f(0.22 * glow + 0.03 * grp.geo.z) * (1.0 - clamp(g, vec3f(0.0), vec3f(1.0)));
 
     // Increase Contrast: a border in the label colour.
-    if grp.edge.z > 0.0 {
+    if mat.edge.z > 0.0 {
         let border = clamp(1.0 - (-d) / pt, 0.0, 1.0);
-        g = mix(g, vec3f(1.0 - step(0.5, lightness)), border * grp.edge.z);
+        g = mix(g, vec3f(1.0 - step(0.5, lightness)), border * mat.edge.z);
     }
 
-    // Materialize needs no alpha: the CPU scales every effect by presence, so at 0 the
-    // glass is exactly the untouched backdrop.
-    return vec4f(decode(g) * cov, cov + dark);
+    // Materialize: the CPU scales every effect by presence, so at 0 the glass is exactly
+    // the untouched backdrop. Coverage follows presence too, so glass that only samples the
+    // content (`Scene::glass_on_glass` off) doesn't punch a hole in the glass below it the
+    // moment it appears; over plain content the two are the same picture.
+    let a = cov * clamp(grp.geo.y, 0.0, 1.0);
+    return vec4f(decode(g) * a, a + dark);
 }

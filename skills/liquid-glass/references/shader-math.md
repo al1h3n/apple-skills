@@ -154,14 +154,30 @@ x = mix(x, min(x, darken_to), darken)         // DARKEN with grey
 |---|---|---|---|---|
 | Clear (kit) | 0.063 | 1.0 / 0.04 | 0 | 0 |
 | Clear bar (Dock) | 0 | 0.6 / 0.33 | 0 | 0 |
-| Regular light, small → large | 0 | 0.92 / 0.3 | 0.2 → 0.7 | 0.75 / 0.1 |
+| Regular light, small → large | 0 | 0.92 / 0.3 → 0.45 | 0.2 → 0.75 | 0.75 / 0.1 |
 | Regular dark (derived) | 0.03 | 0.25 / 0.2 | 0 | 0 / 0.25 → 0.52 |
 
-Regular glass mixes the light and dark faces using `lightness`:
-`mix(scheme, smoothstep(0.26, 0.46, L_backdrop), adapt)`. Here `L_backdrop` is the coarsest
-pyramid level at the group centre, and `adapt = 1 - τ` with `τ = smoothstep(44, 320, min side in pt)`.
-Small glass flips with the content; large glass follows the colour scheme. The threshold is
-biased toward light.
+Regular glass picks the light or the dark face; it never shows a 50/50 blend of the two,
+which is the flat grey Apple's glass doesn't have. Move the *threshold*, not the mix:
+
+```
+flip      = mix(scheme_edge, 0.36, adapt)     // scheme_edge = -0.2 light scheme, 1.2 dark
+lightness = smoothstep(flip - 0.06, flip + 0.06, L_backdrop)
+g         = mix(tone(g, dark), tone(g, light), lightness)
+```
+
+`L_backdrop` is the coarsest pyramid level at the shape centre (blended across a liquid neck),
+`τ = smoothstep(44, 320, min side in pt)` and `adapt = 1 - smoothstep(0, 0.5, τ)`. Small glass
+flips with the content at ~0.36 (biased toward light); from about 180 pt (`adapt` 0) glass
+follows the colour scheme. Liquid Rust's `appearance.adapt_to_content = false` forces `adapt` 0.
+
+**Transparency slider** (`k = 2·transparency − 1`, iOS 27). Toward fully tinted (`k > 0`) move
+each face toward Apple's tinted glass, never toward mid grey: dark `darken_to → #1C1C1E` and
+`darken` up to 70–85 %, light `lighten` up to 70–88 % white, both capped at 0.88 so a trace
+of the backdrop colour stays; frost ×2^(k/2); edge, rim and specular up slightly so the bevel
+still reads. Leave `luminance_mix` alone (raising it is what greyed tinted glass before
+liquid-rust 0.2.4). Toward ultra clear (`k < 0`) thin all three fills and frost ×2^(1.1k).
+Reduce Transparency = the fully tinted faces plus heavy frost.
 
 ## 6. Tint (stained glass)
 
@@ -206,14 +222,21 @@ g = mix(g, tinted, 0.85 × alpha)      // never 1.0: a solid fill "breaks the ma
 
 ## 9. Glass on glass
 
+Apple's rule is that glass doesn't sample glass: the simplest correct option is to let every
+layer refract the content only and cover the glass beneath it (Liquid Rust:
+`scene.glass_on_glass = false`). For a higher layer that should refract lower glass:
+
 Sort groups into z-layers. If layer *i* overlaps the bounds of lower glass:
 1. copy the current backdrop to an offscreen texture inside layer *i*'s region;
 2. draw layer *i−1* into it;
 3. rebuild the pyramid there;
 4. draw layer *i* from it.
 
-Use two textures in ping-pong. Layers that don't overlap reuse the pyramid. Upper glass
-should be Regular.
+Use two textures in ping-pong, alternating per *rebuild* rather than per layer index (a layer
+in between that needs no rebuild would otherwise read and write the same texture), and draw
+every layer since the last rebuild into the copy. Give the layered backdrop a pyramid of its
+own so the content's cached blur survives. Layers that don't overlap reuse the pyramid. Upper
+glass should be Regular.
 
 ## 10. Cost guide (1206×2622, RTX 30-series)
 
@@ -222,7 +245,7 @@ should be Regular.
 | Pyramid, region-limited | ~0.1 ms, 0 when cached |
 | Flat interior pixel | 1 SDF + 8 bilinear taps |
 | Bevel pixel with dispersion | 1 SDF + 24 taps + 2–5 offset SDFs |
-| Whole showcase (8 groups, merging, layered) | 0.6–0.7 ms per frame |
+| Whole showcase (8 groups, merging, layered), RTX 3060 Ti | 0.7 ms static content, 0.8 ms changing |
 
 Mobile guidance:
 - Drop dispersion, which takes the bevel from 24 taps to 8.
@@ -236,6 +259,8 @@ Mobile guidance:
 | Looks like frosted plastic | blur too strong (σ calibration) or a white fill instead of luminance compression |
 | Hard crease along corner diagonals | raw box gradient: soften the interior normal |
 | Seams between merged blobs | hard `min`, or normals not mixed in `smin` |
+| Fused button loses or steals a tint | one material per group: give each shape its own and mix it with the `smin` weight |
+| Tinted / Reduce Transparency glass looks flat grey | slider raised the luminosity fill or blended both faces: tint toward near-black and white instead (§5) |
 | Jagged edge | coverage not divided by \|∇d\| |
 | Rim looks like a 1 px white border | missing direction factor / splay |
 | Colour fringe in the centre | dispersion not restricted to the bevel |

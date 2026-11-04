@@ -5,7 +5,7 @@ You can't get real Liquid Glass from CSS alone. It needs a GPU pass that reads t
 
 | Path | When | Status |
 |---|---|---|
-| **A. Liquid Rust → wasm** | You can ship a ~1 MB wasm, or the page is a canvas app | Tested: `LiquidRust/web` (wasm-pack, WebGPU) |
+| **A. Liquid Rust → wasm** | You can ship a ~1 MB wasm, or the page is a canvas app | Tested: `liquid-rust/web` 0.2.5 (wasm-pack, WebGPU) |
 | **B. Raw WebGPU + `assets/*.wgsl`** | Pure JS / TS stack, no wasm | Same shaders; port `renderer.rs` packing (§3) |
 | **C. three.js WebGPURenderer / TSL** | Already in a three.js scene | Port the maths in `shader-math.md` to TSL nodes |
 | **D. CSS fallback** | WebGPU missing, or for DOM chrome where you can't capture the backdrop | §5. An approximation only |
@@ -32,7 +32,7 @@ wallpaper the blur pyramid is built once.
 ## 2. Path A: Liquid Rust in the browser (recommended)
 
 ```bash
-cd LiquidRust/web
+git clone https://github.com/al1h3n/liquid-rust && cd liquid-rust/web
 wasm-pack build --target web --release
 python -m http.server
 ```
@@ -51,6 +51,14 @@ glass.add(24, 24, 52, 52, -1, "regular", 0, true, false, bar, 0);   // x,y,w,h, 
 glass.add(300, 24, 110, 52, -1, "tinted", 0x0088ff, true, false, -1, 0);
 glass.setAppearance(0.5, false, false, false, matchMedia("(prefers-reduced-motion: reduce)").matches);
 
+// Morphs and menus (handles are the numbers add/expandFrom return):
+const menu = glass.expandFrom(0, 24, 90, 250, 300, 28, "regular", 0);  // source, x,y,w,h, radius, material, tint
+glass.collapseInto(menu, 0);                                 // back into glass 0, then dropped
+glass.setFrame(1, 300, 90, 110, 52); glass.remove(1);
+glass.setContainerSpacing(bar, 20);                          // 0 = no merging
+glass.setPhysics(false);                                     // changes land instantly
+glass.setLightAngle(45);
+
 let running = false, last = 0;
 const tick = t => { const dt = (t - last) / 1000; last = t; running = glass.frame(dt); if (running) requestAnimationFrame(tick); };
 const wake = () => { if (!running) { running = true; last = performance.now(); requestAnimationFrame(tick); } };
@@ -59,6 +67,9 @@ canvas.onpointermove = e => { glass.pointerMove(e.clientX, e.clientY); wake(); }
 canvas.onpointerup   = () => { glass.pointerUp(); wake(); };
 wake();
 ```
+
+The wrapper doesn't expose `set_material_with`, `place`, `glass_on_glass` or
+`adapt_to_content` yet; add a method to `web/src/lib.rs` when a page needs one.
 
 Canvas colour: canvases are `bgra8unorm`. Configure them with
 `viewFormats: ["bgra8unorm-srgb"]` and render through the `-srgb` view. The shader outputs
@@ -72,8 +83,8 @@ Map accessibility media queries:
 
 ## 3. Path B: raw WebGPU with the shared WGSL
 
-Use `assets/glass.wgsl` and `assets/pyramid.wgsl` unchanged. Recreate the host from
-`LiquidRust/src/renderer.rs`.
+Use `assets/glass.wgsl` and `assets/pyramid.wgsl` unchanged (synced with liquid-rust 0.2.5).
+Recreate the host from `liquid-rust/src/renderer.rs`.
 
 **Pipelines** (`layout: "auto"`):
 - `vs_glass` / `fs_glass`: triangle-strip, 4 vertices × N instances, premultiplied blending
@@ -81,33 +92,46 @@ Use `assets/glass.wgsl` and `assets/pyramid.wgsl` unchanged. Recreate the host f
 - `vs_full` / `fs_down_first`, `fs_down`: target `rgba16float`, no blend.
 - `vs_full` / `fs_blit`: your target format.
 
+**Bindings** (group 0): 0 `Globals` uniform, 1 `shapes`, 2 `groups`, 3 sampler, 4 backdrop
+texture, 5 pyramid texture, 6 `materials` (all storage buffers read-only).
+
 **Buffers** (std430, every field a vec4, all little-endian f32 except `info`):
 
 ```
-Globals (uniform, 64 B):  viewport[w,h,1/w,1/h]  misc[pxPerPt, pyramidLevels, scheme(1 light), 0]
-                          light[sin a, -cos a, 0, 0]  touch[x px, y px, radius px, intensity]
-Shape   (storage, 48 B):  center_half[cx,cy,hx,hy px]  params[radius px, shrink px, axisX, axisY]
-                          stretch[along, 1/along, 0, 0]
-Group   (storage, 192 B): bounds[x0,y0,x1,y1 px]  info(u32)[firstShape, count, 0, 0]
-                          geo[k px, presence, press, adapt]  optics[refraction, depth px, dispersion, frostσ px]
-                          lighting[splay, specular, rim, rimShade]  edge[hairline, edgeBurn, contrast, dim]
-                          shadow[offsetY px, σ px, opacity, 0]
-                          light_a[lift, luminance, lumMix, lighten]  light_b[darkenTo, darken, 0, 0]
-                          dark_a, dark_b (same)  tint[OKLab L, a, b, strength]
+Globals  (uniform, 64 B):   viewport[w,h,1/w,1/h]  misc[pxPerPt, pyramidLevels, scheme(1 light), 0]
+                            light[sin a, -cos a, 0, 0]  touch[x px, y px, radius px, intensity]
+Shape    (storage, 64 B):   center_half[cx,cy,hx,hy px]  params[radius px, shrink px, axisX, axisY]
+                            stretch[along, 1/along, cornerExponent, 0]  extra[bevel depth px, 0, 0, 0]
+Group    (storage, 48 B):   bounds[x0,y0,x1,y1 px]  info(u32)[firstShape, count, blend, 0]
+                            geo[k px, presence, press, 0]
+Material (storage, 144 B):  optics[refraction, adapt, dispersion, frostσ px]
+  one per shape,            lighting[splay, specular, rim, rimShade]  edge[hairline, edgeBurn, contrast, dim]
+  same index as `shapes`    shadow[offsetY px, σ px, opacity, 0]
+                            light_a[lift, luminance, lumMix, lighten]  light_b[darkenTo, darken, 0, 0]
+                            dark_a, dark_b (same)  tint[OKLab L, a, b, strength]
 ```
+
+Each shape's material is resolved for that shape's own size. `blend` is 1 when a group's
+members have different materials; the shader then mixes them across the liquid neck with the
+smooth-min weights it uses for the outline. Write 0 when every member shares one material
+(a row of equal buttons) so the shader skips the material loads. (Before 0.2.5 the group carried a 192 B thin/thick material pair and no
+binding 6; update hosts ported from that layout.)
 
 Effects are pre-multiplied by presence on the CPU, so materialize needs no alpha.
 
 **Per frame**:
 1. Blit content → target.
 2. If the content changed, build the pyramid: mip i from mip i−1, scissored to the glass region.
+   If it didn't, build it once for the whole screen and reuse it wherever the glass moves.
 3. `drawIndexed`-free `draw(4, groupCount)` per z-layer.
 4. Glass on glass: see `shader-math.md` §9.
 
 **CPU side** (port it or call the wasm):
 - springs: `motion.md`
 - clustering with union-find on the container spacing
-- material resolve, which includes size thickness τ, the transparency slider and accessibility
+- material resolve per shape, which includes size thickness τ, the transparency slider and accessibility
+- skip `queue.writeBuffer` when a buffer's bytes didn't change, and keep bind groups across
+  frames (each one is a JavaScript object on the web)
 
 ## 4. Path C: three.js (r17x+, WebGPURenderer)
 

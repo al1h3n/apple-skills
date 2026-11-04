@@ -49,7 +49,11 @@ Properties that make it feel native:
 - **Retargeting** (`target = new`) keeps the current value and velocity, so interrupting a
   morph mid-flight continues smoothly — this is SwiftUI's behaviour.
 - Rest when `|x| < ε` and `|v| < ε` (ε ≈ 0.001 pt/scale units) → snap and stop scheduling
-  frames.
+  frames. Past ~1024 an `f32` can't land within ε of the target (steps are 1/8192 at 1024),
+  so also rest when the remaining swing `hypot(x, v/ω0)` fits in ~16 float steps of the
+  target, or when a step rounds back to the same value; otherwise the host renders forever.
+- Clamp `bounce` to ±0.95 before computing ζ: at 1 the spring rings forever and at −1 ζ is
+  infinite. Land at once on a NaN or infinite target, step or spring.
 
 Rust (as in Liquid Rust `motion.rs`):
 
