@@ -59,6 +59,11 @@ how Apple builds the material, and it is the basis of `anatomy.md` §2 and of al
 - The user's earlier `liquid-claude` project: reviewed for its failure modes only (Euler
   physics, collisions, per-pixel full-scene loops, `dFdx` normals).
 
+- A 60 fps screen-and-hand recording of an iPhone on iOS 27 (owner's device, 2026-11,
+  15,650 frames), stepped frame by frame: surface timing (launched exponential, τ 72 / 48 ms),
+  the one-shape menu morph, knob lens release (≈0.1 s, no wobble), drag without stretch,
+  staggered page swipes, and Apple's own two-stage clock glitch (`motion.md` §2).
+
 ## What is [Derived] (tune by eye)
 
 - The regular dark tone, the size → thickness curve (τ 44–320 pt), and the adaptive thresholds.

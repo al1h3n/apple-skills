@@ -78,6 +78,8 @@ Unavoidable stacking (a sheet over a toolbar):
    edge, splay on the flanks, plus soft inner rims. **iOS 27:** a dark 0.5 pt outer hairline.
 5. **Liquid merge** through an SDF smooth union with k = container spacing. Never collision physics.
 6. **Motion:** analytic springs (`duration`/`bounce`) that are retargetable and keep velocity.
+   Surfaces **launch**: full speed on the first frame, exponential landing (τ 72 ms open, 48 ms
+   close; measured on iOS 27, `motion.md` §2). A menu is its button growing, one shape, no neck.
    Press grows the glass and lights it from the finger. Release bounces. Glass materializes
    through lensing, never an alpha fade.
 7. **Adaptivity:** small glass flips light/dark; big glass is thicker; shadows follow the
@@ -123,6 +125,6 @@ glass.add(24, 24, 52, 52, -1, "regular", 0, true, false, -1, 0);
 - `references/shader-math.md`: the full algorithm with calibration constants and a bug table
 - `references/webgpu.md`: browser paths, backdrop capture (HTML-in-Canvas), buffer layouts, CSS fallback
 - `references/motion.md`: the spring maths (copy-ready), choreography values, frame pacing
-- `references/liquid-rust.md`: engine API (crate 0.2.5), behaviour changes, recipes, what it fixes vs naive copies
+- `references/liquid-rust.md`: engine API (crate 0.2.6), behaviour changes, recipes, what it fixes vs naive copies
 - `references/sources.md`: what each claim rests on
 - `assets/glass.wgsl`, `assets/pyramid.wgsl`: tested shaders (WebGPU / wgpu), synced with liquid-rust 0.2.5

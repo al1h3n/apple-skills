@@ -36,6 +36,15 @@ scene.add(Glass::new(Rect::new(20.0, 600.0, 360.0, 300.0)).shape(Shape::Rounded(
 scene.set_frame(a, Rect::new(24.0, 90.0, 250.0, 300.0));  // morph (snappy spring)
 scene.set_frame_with(a, r, Spring::new(0.45, 0.25));       // custom spring
 scene.place(a, r);                                         // jump, no spring (window resize, scroll)
+scene.set_frame_launched(a, r, Spring::EMERGE);            // a tap sends it: full speed, exponential landing (0.2.6)
+
+// A menu opening from its button (0.2.6): the button becomes the menu, no liquid neck
+let menu = scene.morph_from(a, Glass::new(r).shape(Shape::Rounded(28.0)).z(1), Spring::EMERGE);
+scene.shrink_into(menu, a, Spring::RECEDE);                // launched back, dropped on landing
+
+// Any animated value can launch (Animated::launch_to): x(t) = x0·e^(−ω0·t) at bounce 0
+let mut v = Animated::new(0.0, Spring::EMERGE);
+v.launch_to(1.0, Spring::EMERGE, 1.0);
 scene.set_shape(a, Shape::Rounded(28.0));                  // instant outline change
 scene.set_container_spacing(bar, 20.0);                    // 0 = no merging
 scene.remove(a);                                           // dematerialize, then dropped
@@ -87,6 +96,19 @@ already exist on crates.io. Liquid Rust only needs the distance field, and that 
 | `Renderer` / `Frame` | wgpu passes; one renderer per target format (and per pass with `render_layers`) |
 
 ## Behaviour to know (0.2.x)
+
+- **Launched motion and the one-shape morph (0.2.6).** Fitted to a frame-by-frame iOS 27
+  recording (`motion.md` §2): `Spring::EMERGE` (0.45 s) and `Spring::RECEDE` (0.3 s) with
+  `Animated::launch_to` / `Scene::set_frame_launched` start at full speed and land
+  exponentially. `morph_from` grows new glass *as* its source (its frame, outline, full
+  presence) without joining the source's container, so no neck forms and the button never
+  bulges; give it a higher z so it covers the button. `shrink_into` launches it back and drops
+  it on landing. Use `expand_from` / `collapse_into` only when you *want* a liquid neck (two
+  shapes that stay separate objects, like a search bar and its suggestions).
+- **Calmer drag (0.2.6).** Stretch is capped at 10 % (was 25 %) and settles at `0.3 s, 0.1`
+  (was `0.35 s, 0.4`); a released lens drops on `Spring::KNOB_SETTLE` launched (≈0.1 s) instead
+  of `.snappy`. iOS 27 shows no jelly; the old values read as the shape being squeezed and
+  smashed.
 
 - **Fused glass keeps its own material (0.2.5).** Each shape in a container carries its own
   material, resolved for its own size; across the liquid neck the materials blend with the

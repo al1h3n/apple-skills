@@ -174,6 +174,40 @@ In Chromium only, `backdrop-filter: url(#lens)` with an SVG `feDisplacementMap` 
 refraction. Precompute the displacement map from the squircle profile (kube.io's method).
 Safari and Firefox ignore SVG backdrop filters, so treat this as progressive enhancement only.
 
+**Recipe that matches the shader** (BitsUILiquidGlass `refraction.ts`, used by AlmaSmart):
+- Map size = the element's CSS size; regenerate on `ResizeObserver`. For each pixel: signed
+  distance to the rounded rect, outward normal `n`, depth `t = clamp(−d / bevel, 0, 1)`,
+  offset `= refraction · bevel · tan(θ − asin(sin θ / 1.5))` with `θ = atan(slope(t))` and
+  `slope` from `h(t) = (1 − (1 − t)^4)^(1/4)`. Sample **inward**: `R = 0.5 − n.x·off/scale`,
+  `G = 0.5 − n.y·off/scale`, `scale = 2 · max offset`.
+- Filter: `feImage` (the map, `width`/`height` in px, `preserveAspectRatio="none"`) →
+  `feGaussianBlur` on `SourceGraphic` (`edgeMode="duplicate"`, the frost) → `feDisplacementMap`
+  → `feColorMatrix type="saturate"`, with `color-interpolation-filters="sRGB"` on the filter or
+  the map is read through a gamma curve and everything bends sideways.
+- Expose it as a custom property with a fallback, so one rule serves every engine:
+  `backdrop-filter: var(--lg-refract, blur(4px) saturate(1.6))`; set `--lg-refract: url(#id)`
+  only where `navigator.userAgentData.brands` names Chromium.
+- Only where the glass is visible: a knob's lens gets it while pressed (`:active`,
+  `[data-active]`), not at rest under an opaque white knob.
+
+### Which path for which element
+
+WebGPU glass (Liquid Rust) refracts **one canvas** it copies (a map, a video); it can't see
+HTML. So: glass over a canvas → Liquid Rust; glass over HTML (a switch knob's lens over its
+track, a slider lens, a sheet over page content) → CSS with the recipe above; glass that
+follows a finger every frame (a Vaul sheet) → CSS on the element itself (WebGPU would trail a
+frame behind the DOM transform).
+
+### Headless kits (Bits UI, Melt UI, Vaul)
+
+They render unstyled parts with state in data attributes, so glass is pure CSS keyed to them:
+`[data-state='checked']` (switch), `[data-active]` (slider thumb), `[data-state='open' |
+'closed']` (popover, menu, dialog: run the emerge/recede keyframes, Bits UI keeps the node
+mounted until the closing animation ends), `--bits-*-content-transform-origin` (grow out of
+the trigger), `[data-vaul-drawer]` (sheets). A ready preset: `BitsUILiquidGlass/liquid-glass.css`.
+A partial-height sheet (iOS 26/27) floats inset 8 pt with every corner rounded and is glass;
+at full height it is opaque and edge to edge.
+
 ## 6. Web-specific rules
 
 - Size the canvas in device pixels. Pass `devicePixelRatio` as the scale; scene units are CSS pixels.

@@ -102,7 +102,7 @@ Button("Skip") { }.buttonStyle(.glass(.clear))         // iOS 26.1+: GlassButton
 ```
 
 Sliders and toggles turn their knob into a glass *lens* while dragged — free with system
-controls; to reproduce it custom, see `motion.md` §4.
+controls; to reproduce it custom, see `motion.md` §2.2 (measured lens) and §3 (choreography).
 
 ## 5. Bars, toolbars, tabs, sidebars
 
@@ -191,6 +191,38 @@ container.contentView = clusterView   // descendant NSGlassEffectViews merge
 
 `NSButton` with `bezelStyle = .glass`, `NSBackgroundExtensionView`,
 `NSSplitViewController(inspectorWithViewController:)`, `NSToolbarItem.space`.
+
+## 7a. API inventory (every Liquid Glass object, one table)
+
+Use it as a checklist when porting a design: each row is the native object and what a custom
+renderer (Liquid Rust, the CSS preset) must reproduce. Rows marked † were announced at
+WWDC25/26 sessions; check the exact spelling in the SDK headers before relying on it.
+
+| Area | SwiftUI | UIKit | AppKit | Custom equivalent |
+|---|---|---|---|---|
+| Material | `Glass.regular / .clear / .identity`, `.tint(_:)`, `.interactive(_:)` | `UIGlassEffect(style: .regular / .clear)`, `.tintColor`, `.isInteractive` | `NSGlassEffectView.style`, `.tintColor`, `.effectIsInteractive`† | `Material::regular/clear/tinted/identity`; `.lg-glass`, `.lg-clear`, `.lg-tinted` |
+| Apply | `glassEffect(_:in:)`, `DefaultGlassEffectShape` (capsule) | `UIVisualEffectView(effect:)` | `NSGlassEffectView.contentView` | `scene.add(Glass::new(…))` |
+| Container / merge | `GlassEffectContainer(spacing:)` | `UIGlassContainerEffect` (`.spacing`) | `NSGlassEffectContainerView` (`.spacing`) | `add_container(spacing, z)` |
+| Morph identity | `glassEffectID(_:in:)` + `@Namespace` | (set `effect` inside `UIView.animate`) | — | `morph_from` / `shrink_into` (one shape), `expand_from` (with neck) |
+| Union at rest | `glassEffectUnion(id:namespace:)` | nested in one container | nested in one container | same container, spacing > gap |
+| Transitions | `glassEffectTransition(.matchedGeometry / .materialize / .identity)` | — | — | morph vs `add` / `remove` (lensing ramps) |
+| Buttons | `.buttonStyle(.glass)`, `.glassProminent`, `.glass(.clear)`; `.buttonBorderShape(.capsule / .circle / .roundedRectangle)`; `.controlSize(.extraLarge)`† | `UIButton.Configuration.glass() / .prominentGlass() / .clearGlass() / .prominentClearGlass()` | `NSButton.BezelStyle.glass` | `.interactive()`; `.lg-button` |
+| Toggle / Slider | system `Toggle`, `Slider` (knob turns into a lens while held); `Slider` tick marks / neutral value† | `UISwitch`, `UISlider` (track configuration / thumbless style†) | `NSSwitch`, `NSSlider` | `.lens()` glass; `.lg-switch`, `.lg-slider` + `use:refraction` |
+| Segmented | `Picker(.segmented)` | `UISegmentedControl` | `NSSegmentedControl` | `.lg-segmented` |
+| Menus, popovers | `Menu`, `.popover`, `.presentationCompactAdaptation(.popover)` | `UIMenu`, `UIPopoverPresentationController` | `NSMenu`, `NSPopover` | `morph_from` the trigger; `.lg-pop` |
+| Sheets | `.sheet` + `.presentationDetents([.medium, .large])` (partial = inset glass, large = opaque); `.presentationBackground(_:)` replaces the glass | `UISheetPresentationController.detents` | sheets on windows | `.lg-sheet` / `.lg-sheet-full` |
+| Zoom from source | `.matchedTransitionSource(id:in:)` on the button + `.navigationTransition(.zoom(sourceID:in:))` on the sheet or pushed view (the sheet grows out of the toolbar button) | `preferredTransition = .zoom { … }` | — | `morph_from` + content blur-in |
+| Toolbars | `ToolbarItem`, `ToolbarItemGroup`, `ToolbarSpacer(.fixed / .flexible)`, `.sharedBackgroundVisibility(.hidden)`†, `.badge`† | `UIBarButtonItem.hidesSharedBackground`†, `.style = .prominent`†, `.fixedSpace(_:)` | `NSToolbarItem.space` | one container per group |
+| Tab bar | `TabView`, `Tab(role: .search)`, `.tabViewStyle(.sidebarAdaptable)`, `.tabBarMinimizeBehavior(.onScrollDown)`, `.tabViewBottomAccessory { }`† | `UITabBarController.tabBarMinimizeBehavior`, `UISearchTab`, bottom accessory† | — | `.lg-bar` |
+| Search | `.searchable`, `.searchToolbarBehavior(.minimize)`† | `UISearchTab`, `UISearchController` | `NSSearchToolbarItem` | capsule `.lg-bar` |
+| Scroll edge | `.scrollEdgeEffectStyle(.soft / .hard, for:)`, `.scrollEdgeEffectHidden(_:for:)`†, `.safeAreaBar(edge:)` | `UIScrollView.topEdgeEffect.style`†, `UIScrollEdgeElementContainerInteraction` | `NSScrollView` edge effect | gradient + blur band under bars |
+| Background extension | `.backgroundExtensionEffect()` | `UIBackgroundExtensionView` | `NSBackgroundExtensionView` | mirror + blur the hero under the sidebar |
+| Corners | `ConcentricRectangle`, `.rect(corners: .concentric)`†, `ContainerRelativeShape`, `.containerShape(_:)` | `UICornerConfiguration`, `UICornerRadius.containerConcentric(minimum:)` | `NSView` corner config† | `.lg-squircle` (`corner-shape: superellipse(1.478)`, radius × 1.3168) |
+| Navigation titles | `.navigationSubtitle(_:)` | `UINavigationItem.subtitle`, `.largeSubtitle`† | `NSWindow.subtitle` | — |
+| Window state | `@Environment(\.appearsActive)` | — | — | dim custom glass when inactive |
+| Widgets / icons | `.widgetAccentedRenderingMode(_:)`, `WidgetRenderingMode.accented`; Icon Composer layers | — | — | — |
+| visionOS | `glassBackgroundEffect(displayMode:)` | — | — | — |
+| Accessibility | Reduce Transparency, Increase Contrast, Reduce Motion, the transparency slider (automatic) | same | same | `Appearance { reduce_transparency, increase_contrast, reduce_motion, transparency }`; CSS media queries |
 
 ## 8. visionOS
 

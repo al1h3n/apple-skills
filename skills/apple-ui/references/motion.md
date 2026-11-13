@@ -17,6 +17,15 @@ that, cut it.
 | bouncy | 0.5 / 0.3 | 157.9 / 17.6 | release after press, menus popping open, AI answer arriving |
 | follow | 0.15 / 0.14 | — | drag, scrub |
 
+**Surfaces launch** (measured on iOS 27, liquid-glass `motion.md` §2): a menu, popover, sheet
+or expanded card leaves at full speed and lands exponentially; it never eases in.
+
+| Launched (bounce 0, start velocity ω0 × distance) | d | τ | Use |
+|---|---|---|---|
+| emerge | 0.45 | 72 ms | anything opening from a tap |
+| recede | 0.3 | 48 ms | closing back into its source |
+| knob settle | 0.18 | 29 ms | a lens dropping back to a knob |
+
 (stiffness = (2π/d)², damping = 2(1 − b)√stiffness)
 
 ## 3. Choreography
@@ -25,6 +34,15 @@ that, cut it.
   window, menu button → sidebar. Same container, matched names (Smart Animate).
 - **Stagger** list rows 20–30 ms; content fades in ~80 ms after its container starts moving.
 - **Press:** scale up slightly (glass grows + glows from the finger), release with bounce.
+  A knob's lens releases in ≈0.1 s without a wobble; a dragged glass shape keeps its shape.
+- **Menus are their button growing:** one shape from the button's frame and corners, content
+  sharpening from a slight blur; closing is quicker and lands exactly on the button.
+- **One animation per change:** never jump first and animate after (Apple's own lock-screen
+  clock does this); interpolate once from what is on screen.
+- **Numbers that change** roll their digits (NumberFlow, `contentTransition(.numericText())`)
+  when they answer something the person did: a distance while measuring, a route's time, a
+  rating after voting. While a value streams (a slider being dragged) it updates in place;
+  digits that never finish rolling are noise.
 - **Loading:** skeleton shimmer at most one sweep per 1.5 s; never block a whole screen.
 - **AI thinking:** a slow light (rotating gradient outline, caret glow), not a spinner.
 - **Self-playing demos:** idle 2–3 s → action 2 s → result 5 s → loop; any click takes control.
