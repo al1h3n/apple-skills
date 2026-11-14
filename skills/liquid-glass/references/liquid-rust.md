@@ -7,7 +7,7 @@ the web (WebGPU via wasm, `web/`). Its shaders are the ones in this skill's `ass
 
 ```toml
 [dependencies]
-liquid-rust = "0.2.5"
+liquid-rust = "0.2"
 ```
 
 ## When to use it
