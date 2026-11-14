@@ -26,7 +26,10 @@ Expand button on the quick card → full window; collapse in the window header �
   text (no bubble), then **cards** (plan timeline, place, route, comparison table), then actions
   (one solid primary, the rest fills), then 2–3 follow-up chips.
 - **Progress line:** "Checked 46 places, weather and air quality" with the AI glyph, instead of
-  a spinner.
+  a spinner. The glyph is Siri's working ring: 7 glowing spheres tumbling in 3D, sizes and
+  brightness by depth (liquid-glass `motion.md` §2.5). Status words cross-fade through a blur.
+- **Answer lands:** the ring gives way to the text, blocks sharpen line by line (top first),
+  embedded cards rise last, then one spectral light runs along the bottom rim.
 - **Composer:** attach (+) · field · voice (mic) · send (solid accent circle, enabled only with
   text). AI outline on the composer while the assistant is active.
 - **Voice state:** waveform replaces the field, "Listening…", red stop button; transcript

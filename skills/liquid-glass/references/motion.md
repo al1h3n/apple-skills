@@ -169,6 +169,56 @@ Liquid Rust 0.2.6: `Animated::launch_to`, `Spring::EMERGE` / `RECEDE` / `KNOB_SE
   one property, and never jump before animating: interpolate once, from the value on screen,
   keeping velocity.
 
+### 2.3 The switch, iOS 26.5 vs 27 (every frame of a side-by-side recording)
+
+One tap on iOS 27, about 25 frames (0.42 s):
+
+| Frames | What happens |
+|---|---|
+| 1–2 | The white knob dissolves into frost; it does not grow yet |
+| 3–8 | It swells into a lens ~1.45× wide and ~1.3× tall, overhanging the track at both ends. Inside, the track is magnified and bent; thick white crescents sit on the top and bottom inner rims; the outer rim is a dark grey hairline |
+| 9–14 | The lens slides across while big; the new colour (green) shows inside the lens before the track turns |
+| 15–23 | It shrinks as it lands and the white fills back in from the side |
+
+Held, the lens stays up. A quick click still plays the whole sequence. iOS 26.5 is the same
+choreography with a thin rainbow (dispersion) rim and a lighter edge; 27 is darker and calmer.
+CSS: `liquid-glass.css` `.lg-switch` with `data-flipping` for 300 ms on click; WebGPU: three
+`set_frame` calls (lens at the start, lens at the end after 60 ms, knob after 250 ms), bounce 0.
+
+### 2.4 Siri (iOS 27, every frame)
+
+The island swells down into a round drop (~0.5 s) whose lower rim bends what is under it, then
+stretches sideways into the pill (~0.33 s) while the status bar blurs away under it. Words never
+slide: the old text blurs and fades in ~4 frames, the new sharpens in place over ~12. The
+material is black at the top fading into clear glass at the bottom edge.
+
+### 2.5 More from the SiriAI recordings and trailer (every frame)
+
+- **The working ring.** While Siri works, a ring of 7 glowing spheres sits left of the status
+  text. It is a ring in 3D: it turns about its centre while its tilt swings and precesses, so
+  spheres swell and brighten coming forward, shrink and dim going back, and pass behind each
+  other (a flat spinner reads cheap). Each sphere has a soft bloom; colour bluish white on the
+  black island. Between "Searching" and "Looking into it" the ring tumbles further (spheres
+  cluster and spread), it never jumps.
+- **Status text.** Grey at about 55 % white, cross-fading through a blur (old out in ~4 frames,
+  new in over ~12); a slow light passes through it. The answer text replaces the ring at the
+  same left edge, white and larger.
+- **Rim light.** Once the answer has landed, a spectral band (blue → white → orange) runs once
+  along the bottom rim, left to right (~1 s), with a soft glow rising from it.
+- **Answer card.** The island grows down into the card in ~15 frames. Its text sharpens from a
+  blur line by line, top first, the last line a beat later (~70 ms apart). An embedded card
+  (weather, map) first shows as a coloured glow line at the card's bottom rim, then slides up
+  into place. Collapsing back takes ~9 frames, the content scaling and blurring with the shape.
+- **Menus are blobs first.** Photos' "Filter by" menu starts as a small blurred *round* blob at
+  its button, rounder than the menu, and its corners tighten to the menu's own as it lands
+  (~12 frames). CSS: animate `border-radius` from a capsule as part of the emerge keyframes.
+- **Notifications rise.** A lock-screen notification appears at ≈ 0.5× near the bottom,
+  translucent and soft, grows to full size as it rises, then slides up into the stack.
+- **App switcher.** The home screen scales up a little and blurs within 4 frames; the app cards
+  enter launched from the side.
+- **Emoji and icons.** The trailer shows emoji as Apple's 3D glyphs, large and alone on black
+  (never flat line art), and app icons as glossy glass objects (a lit sphere over the symbol).
+
 ## 3. Interaction choreography
 
 Values marked [Apple] are described in WWDC25; numbers are [Derived] from frame-stepping

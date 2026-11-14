@@ -44,7 +44,12 @@ or expanded card leaves at full speed and lands exponentially; it never eases in
   rating after voting. While a value streams (a slider being dragged) it updates in place;
   digits that never finish rolling are noise.
 - **Loading:** skeleton shimmer at most one sweep per 1.5 s; never block a whole screen.
-- **AI thinking:** a slow light (rotating gradient outline, caret glow), not a spinner.
+- **AI thinking:** a slow light (rotating gradient outline, caret glow), not a spinner. In a
+  status line, Siri's ring of 7 glowing spheres tumbling in 3D (liquid-glass `motion.md` §2.5),
+  the status words cross-fading through a blur; when the answer lands, one spectral sweep along
+  the bottom rim.
+- **Answers arrive line by line:** each block sharpens from a blur, top first, ~70 ms apart;
+  embedded cards slide up last.
 - **Self-playing demos:** idle 2–3 s → action 2 s → result 5 s → loop; any click takes control.
 
 ## 4. Accessibility
