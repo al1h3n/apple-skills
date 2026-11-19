@@ -1,72 +1,78 @@
 # Sources and confidence
 
-Assembled October 2026 (iOS/macOS 27 shipped). Tags used across the skill:
-**[Apple]**, **[Kit]**, **[RE]**, **[Derived]**.
+Assembled November 2026 (iOS / macOS 27.2 shipping, 27.3 in beta). Tags used across the skill:
 
-## Official Apple [Apple]
+| Tag | Means | Trust |
+|---|---|---|
+| **[Apple]** | Apple's page, session or keynote | rule: binding. Number: until a newer kit disagrees |
+| **[Kit]** | Apple's Figma libraries, read node by node through the plugin API | highest for numbers |
+| **[M1]…[M8]** | measured frame by frame on recording n | timing exact to one frame (17–33 ms); sizes ±5 %; colours directional |
+| **[RE]** | reverse-engineered from Apple's private pipeline | structure reliable, values per-OS |
+| **[D]** | derived here | tune by eye |
 
-- Developer docs (verified through the doc JSON, SDK 27):
-  - `Glass` — `regular`, `clear`, `identity`, `tint(_:)`, `interactive(_:)`
-  - `glassEffect(_:in:)`, `GlassEffectContainer(spacing:)`, `glassEffectID(_:in:)`,
-    `glassEffectUnion(id:namespace:)`, `GlassEffectTransition` (`matchedGeometry`, `materialize`, `identity`)
-  - `GlassButtonStyle` / `.glass` / `.glass(_:)` (26.1) / `.glassProminent`
-  - UIKit: `UIGlassEffect(style:)` (`.regular` / `.clear`, `isInteractive`, `tintColor`),
-    `UIGlassContainerEffect.spacing`, `UIButton.Configuration.glass()` / `.prominentGlass()` /
-    `.clearGlass()` / `.prominentClearGlass()`, `UICornerConfiguration.capsule()`
-  - AppKit: `NSGlassEffectView` (`style`, `tintColor`, `cornerRadius`, `effectIsInteractive`),
-    `NSGlassEffectContainerView`, `NSButton.BezelStyle.glass`
-  - `ToolbarOverflowMenu` (27.0)
-- Technology overview "Adopting Liquid Glass" and article "Applying Liquid Glass to custom views".
-- HIG *Materials* (updated Sep 9 2025): regular vs clear, the three conditions for clear,
-  35 % dimming, no glass in the content layer.
-- HIG *Color*, section "Liquid Glass color" (updated Dec 16 2025): colour the background for
-  primary actions, use colour sparingly, monochrome bars over colourful content.
-- WWDC25 219 "Meet Liquid Glass" (full transcript read): lensing, materialize, adaptive
-  shadows, flip light/dark, highlights, illumination from the touch point, no glass on glass,
-  regular vs clear, tint mapping, accessibility.
-- WWDC26 102 Platforms State of the Union and 269 "What's new in SwiftUI" (transcripts):
-  better diffusion, the slider from "ultra clear to fully tinted", sidebars to the edge,
-  pointer-interactive glass on macOS, `appearsActive`, new toolbar APIs, icon refraction,
-  Xcode 27 adoption.
-- iOS 26.1 "Clear / Tinted" Liquid Glass setting (Engadget, TechCrunch, Tom's Guide, Oct 2025).
-- Spring model: WWDC23 "Animate with springs" (duration/bounce → stiffness/damping).
+## Apple [Apple]
 
-## Apple Figma kit [Kit]
+- HIG *Materials* (last change September 9, 2025): Regular vs Clear, three conditions for Clear, 35 % dimming, no glass in content layer, scroll edge effects, standard materials for content.
+- HIG *Color*, "Liquid Glass color" (December 16, 2025): colour the background for the primary action, colour sparingly, monochrome bars over colourful content.
+- HIG *App icons* (June 8, 2026; October 28, 2026): layers, formats, appearances, what not to bake in.
+- WWDC25 219 "Meet Liquid Glass": lensing, materialize, adaptive shadow, light/dark flip, illumination from the touch point, no glass on glass, tint mapping, accessibility.
+- WWDC25 361, WWDC26 group lab 8012: Icon Composer (groups, specular, blur, refraction, translucency, shadow, mono, pinned clear glass).
+- WWDC26 keynote + Platforms State of the Union + 269 "What's new in SwiftUI": better diffusion, darkened edge, brighter specular, transparency slider, uniform toolbar on scroll, `appearsActive`, toolbar additions, icon refraction.
+- WWDC23 "Animate with springs": duration / bounce model.
+- Developer docs, SDK 27: `Glass`, `glassEffect`, `GlassEffectContainer`, `glassEffectID`, `glassEffectUnion`, `GlassEffectTransition`, `GlassButtonStyle`, `UIGlassEffect`, `UIGlassContainerEffect`, `UIButton.Configuration.glass()` family, `UICornerConfiguration`, `NSGlassEffectView`, `NSGlassEffectContainerView`, `ToolbarOverflowMenu`.
+- Press on betas: MacRumors (10 and 16 June 2026), 9to5Mac (15 June 2026), Beta Profiles (27.3 beta 1: wallpaper zoom-out restored).
 
-User's file "Template for UI" → frame "iOS + IpadOS". Every effect stack was read through the
-Figma Plugin API: GLASS, INNER_SHADOW, DROP_SHADOW, fills and blend modes. Renders at 4× were
-compared against Liquid Rust pixel profiles. This is the most precise public description of
-how Apple builds the material, and it is the basis of `anatomy.md` §2 and of all presets.
+## Figma kits [Kit]
+
+Community libraries by Apple, every component imported by key, every variant and nested component serialised (fills, blend modes, effects incl. `GLASS`, variables, text, auto-layout), light + dark renders:
+
+| Library | Components read |
+|---|---|
+| iOS and iPadOS 27 | 198 |
+| macOS 27 | 115 |
+| iOS and iPadOS 26 | 142 |
+| macOS 26 | 56 |
+
+Basis of `anatomy.md`, `components.md`, `versions/26.md`, `versions/27.md`.
+
+## Recordings [M1]…[M8]
+
+Every frame extracted; motion events found by frame-difference energy; edges tracked per frame; curves fitted (exponential τ, spring duration/bounce).
+
+| # | Recording | Compares | Gives |
+|---|---|---|---|
+| M1 | background effect and zoom, 822 frames | iOS 27.2 vs 27.3 beta | backdrop layers on app close/open |
+| M2 | bend and blur, 1392 | 26.6.1 vs 27 | Clear glass frost, tone, refraction band, rim |
+| M3 | bar animations, 1238 | 26.5 vs 27 beta | press, release, bar mode change, rest look of Regular |
+| M4 | notification, 777 | 27 beta 5 vs beta 6 | banner arrival, rest, dismissal |
+| M5 | switch, 1549 | 26.5 vs 27 beta 2 | knob lens geometry and sequence |
+| M6 | assistant, 1408 | 27 | island → drop → pill → bar, text swap, rim light |
+| M7 | Apple's assistant film, 1788 + 666 | 27 | answer card, menu from a button, Lock Screen notification |
+| M8 | hand-held capture of an iPhone, 15,419 | 27 | legibility flip, Control Center, sheets, camera, Photos |
+
+**[M9]** macOS 27 screen recordings, 1920 × 1080 at 60 fps, 1 px ≈ 1 pt: Mail and Photos
+windows, the AirPods equalizer and Listening Mode sliders, Siri, Visual Intelligence, a
+28,500-frame walk through Settings, Dock, traffic lights and Spotlight, and 71 app icons
+side by side in 26 and 27. Notes: the liquid-rust repository, docs/research (macos-27 and
+icons-macos-26-vs-27).
+
+Limits: 60 fps capture of a 120 Hz display (fast things show doubled); M1/M4/M5/M6 are 30 fps content; M8 is a camera filming a screen (levels relative, timing exact); icon references are small web images.
 
 ## Reverse engineering [RE]
 
-- **ShatteredGlass** (AlexStrNik): the macOS 26 Core Animation layer tree. `CABackdropLayer`
-  (scale 0.25) + `glassBackground` CAFilter (blur, inner/outer refraction, face colour matrix,
-  luma-aware shadow, bleed, HDR) + `CASDFLayer` union + two opposite `CASDFGlassHighlightEffect`s
-  with `vibrantColorMatrix`. The parameter values are in `anatomy.md` §3.
-- **LiquidGlassKit** (DnV1eX): a Metal reimplementation of `_UILiquidLensView`. Refraction from
-  SDF depth, glare taken as an LCH-boosted backdrop, a velocity-driven lens scale.
+- **ShatteredGlass** (AlexStrNik): macOS 26 Core Animation tree. `CABackdropLayer` (scale 0.25) + `glassBackground` CAFilter + `CASDFLayer` union + two opposite `CASDFGlassHighlightEffect` with `vibrantColorMatrix`. Values in `anatomy.md` §8.
+- **LiquidGlassKit** (DnV1eX): Metal reimplementation of `_UILiquidLensView`: refraction from SDF depth, glare as an LCH-boosted backdrop, velocity-driven lens scale.
 
-## Community techniques (ideas checked, code not copied)
+## Techniques (ideas checked, code not copied)
 
-- kube.io "Liquid Glass in the browser": surface profiles (the squircle), Snell displacement,
-  SVG displacement maps.
-- figma_glass (Flutter): Figma parameter semantics (depth = bevel px, splay = falloff,
-  light peak and opposite peak).
+- kube.io "Liquid Glass in the browser": surface profiles, Snell displacement, SVG displacement maps.
+- figma_glass (Flutter): Figma parameter semantics.
 - Inigo Quilez: rounded-box SDF, smooth minimum with gradients.
-- Jimenez 2014 (Call of Duty: Advanced Warfare): the 13-tap downsample.
-- Chrome blog: HTML-in-Canvas origin-trial API shape (Chrome 155+).
-- The user's earlier `liquid-claude` project: reviewed for its failure modes only (Euler
-  physics, collisions, per-pixel full-scene loops, `dFdx` normals).
+- Jimenez 2014 (Call of Duty: Advanced Warfare): 13-tap downsample.
+- Chrome: HTML-in-Canvas, stable in Chrome 157 (`developer.chrome.com/blog/html-in-canvas`).
 
-- A 60 fps screen-and-hand recording of an iPhone on iOS 27 (owner's device, 2026-11,
-  15,650 frames), stepped frame by frame: surface timing (launched exponential, τ 72 / 48 ms),
-  the one-shape menu morph, knob lens release (≈0.1 s, no wobble), drag without stretch,
-  staggered page swipes, and Apple's own two-stage clock glitch (`motion.md` §2).
+## What is [D]
 
-## What is [Derived] (tune by eye)
-
-- The regular dark tone, the size → thickness curve (τ 44–320 pt), and the adaptive thresholds.
-- Press, glow and stretch amplitudes.
-- The transparency-slider mapping.
-- The lit-line width of 0.25 pt × (1 + splay): fitted to the kit render.
+- σ = frost / 2; lit-line width; size → thickness curve; adaptive thresholds (confirm against M8 when retuning).
+- Hover values. Reduce Motion replacements. Transparency-slider mapping.
+- Icon generator widths and strengths (`icons.md` §4).

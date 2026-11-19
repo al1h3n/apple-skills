@@ -4,14 +4,14 @@
 //
 // Per pixel, in Apple's kit order:
 //   backdrop -> refraction (squircle bevel, Snell) + dispersion + frost (pyramid)
-//   -> tone mapping (Figma fills, sRGB-encoded space) -> stained-glass tint
+//   -> tone mapping (Figma fills, sRGB-encoded space) -> tint
 //   -> specular light, inner rim shadows, touch glow
 //   outside the shape: adaptive drop shadow + darkened hairline edge (iOS 27).
 // Output is premultiplied alpha over the content already in the target.
 
 struct Globals {
     viewport: vec4f, // width, height, 1/width, 1/height (px)
-    misc: vec4f,     // px per pt, pyramid levels, scheme (1 light, 0 dark), unused
+    misc: vec4f,     // px per pt, pyramid levels, unused, unused
     light: vec4f,    // direction toward the light (x, y), unused, unused
     touch: vec4f,    // position (px), radius (px), intensity
 };
@@ -20,7 +20,7 @@ struct Shape {
     center_half: vec4f, // center (px), half size (px)
     params: vec4f,      // corner radius, inward shrink, stretch axis (x, y)
     stretch: vec4f,     // scale along axis, scale across axis, corner exponent, unused
-    extra: vec4f,       // bevel depth (px), unused, unused, unused
+    extra: vec4f,       // bevel depth (px), knob face opacity, bevel profile exponent, mask layer + 1 (0 = box)
 };
 
 struct Group {
@@ -31,15 +31,15 @@ struct Group {
 
 // One per shape (same index), resolved for that shape's own size.
 struct Material {
-    optics: vec4f,      // refraction, light/dark adaptivity, dispersion, frost sigma (px)
+    optics: vec4f,      // refraction, face (0 dark, 1 light), dispersion, frost sigma (px)
     lighting: vec4f,    // splay, specular, rim, rim shade
     edge: vec4f,        // inner hairline, outer edge burn, contrast border, dim
-    shadow: vec4f,      // offset y (px), sigma (px), opacity, unused
+    shadow: vec4f,      // offset y (px), sigma (px), opacity, body zoom (1 = none)
     light_a: vec4f,     // light tone: lift, luminance, luminance mix, lighten
     light_b: vec4f,     // light tone: darken to, darken, unused, unused
     dark_a: vec4f,      // dark tone
     dark_b: vec4f,
-    tint: vec4f,        // OKLab L, a, b, strength
+    tint: vec4f,        // colour (sRGB-encoded r, g, b), strength
 };
 
 @group(0) @binding(0) var<uniform> globals: Globals;
@@ -49,6 +49,8 @@ struct Material {
 @group(0) @binding(4) var src: texture_2d<f32>;
 @group(0) @binding(5) var pyr: texture_2d<f32>;
 @group(0) @binding(6) var<storage, read> materials: array<Material>;
+// Baked silhouettes (mask.rs): signed distance in texels (negative inside), outward normal.
+@group(0) @binding(7) var masks: texture_2d_array<f32>;
 
 const ETA: f32 = 1.5;               // index of refraction of the virtual glass
 const KIT_OFFSET: f32 = 40.0;       // Figma inner-shadow offset/spread in the kit (pt)
@@ -100,6 +102,23 @@ fn sdg_rrect(p: vec2f, half: vec2f, r: f32, n: f32, soft: f32) -> vec3f {
     return vec3f(g - r, sg * normalize(e));
 }
 
+// A baked silhouette fitted into the box, aspect kept: the distance it stores, plus the way
+// out of its square for points beyond it.
+fn sdg_mask(p: vec2f, half: vec2f, layer: i32) -> vec3f {
+    let side = 2.0 * max(half.x, half.y);
+    let uv = p / side + 0.5;
+    let inside = clamp(uv, vec2f(0.0), vec2f(1.0));
+    let texel = textureSampleLevel(masks, samp, inside, layer, 0.0);
+    let beyond = (uv - inside) * side;
+    let out = length(beyond);
+    let unit = side / f32(textureDimensions(masks).x);
+    var n = texel.yz;
+    if out > 0.0 {
+        n = beyond / out;
+    }
+    return vec3f(texel.x * unit + out, n / max(length(n), 1e-4));
+}
+
 fn sdg_shape(p: vec2f, s: Shape) -> vec3f {
     let soft = s.extra.x * 0.35;
     let axis = s.params.zw;
@@ -107,7 +126,12 @@ fn sdg_shape(p: vec2f, s: Shape) -> vec3f {
     let rel = p - s.center_half.xy;
     let u = dot(rel, axis) / s.stretch.x;
     let v = dot(rel, across) / s.stretch.y;
-    let dg = sdg_rrect(u * axis + v * across, s.center_half.zw, s.params.x, s.stretch.z, soft);
+    var dg: vec3f;
+    if s.extra.w > 0.5 {
+        dg = sdg_mask(u * axis + v * across, s.center_half.zw, i32(s.extra.w) - 1);
+    } else {
+        dg = sdg_rrect(u * axis + v * across, s.center_half.zw, s.params.x, s.stretch.z, soft);
+    }
     let m = min(s.stretch.x, s.stretch.y);
     let grad = (dot(dg.yz, axis) / s.stretch.x * axis + dot(dg.yz, across) / s.stretch.y * across) * m;
     return vec3f(dg.x * m + s.params.y, grad);
@@ -137,6 +161,8 @@ fn sdg_group(p: vec2f, grp: Group) -> vec3f {
 struct Field {
     dg: vec3f,    // distance and normal, as sdg_group
     attrs: vec3f, // bevel depth (px) and centre (px), blended as the shapes fuse
+    face: f32,    // knob face opacity, blended the same way
+    profile: f32, // bevel profile exponent, blended the same way
     mat: Material, // material, blended the same way
 };
 
@@ -150,6 +176,8 @@ fn field_group(p: vec2f, grp: Group) -> Field {
     let first = shapes[grp.info.x];
     var dg = sdg_shape(p, first);
     var attrs = vec3f(first.extra.x, first.center_half.xy);
+    var face = first.extra.y;
+    var profile = first.extra.z;
     var mat = materials[grp.info.x];
     // Same for every pixel of the quad, so the branch costs nothing; a row of equal buttons
     // skips the material loads entirely.
@@ -160,11 +188,13 @@ fn field_group(p: vec2f, grp: Group) -> Field {
         let w = smin_w(dg.x, b.x, grp.geo.x);
         dg = vec3f(w.x, mix(dg.yz, b.yz, w.y));
         attrs = mix(attrs, vec3f(s.extra.x, s.center_half.xy), w.y);
+        face = mix(face, s.extra.y, w.y);
+        profile = mix(profile, s.extra.z, w.y);
         if blend {
             mat = mix_material(mat, materials[grp.info.x + i], w.y);
         }
     }
-    return Field(dg, attrs, mat);
+    return Field(dg, attrs, face, profile, mat);
 }
 
 // ---------------------------------------------------------------- maths helpers
@@ -214,37 +244,14 @@ fn set_lum(c: vec3f, l: f32) -> vec3f {
     return x;
 }
 
+// The fills of Apple's "Fill + Shadow" layer, in the order its kit stacks them: a dodge,
+// a white fill, a darken fill, and a luminosity fill last.
 fn tone(c: vec3f, a: vec4f, b: vec4f) -> vec3f {
     var x = min(c + vec3f(a.x), vec3f(1.0));
-    x = mix(x, set_lum(x, a.y), a.z);
     x = mix(x, vec3f(1.0), a.w);
     x = mix(x, min(x, vec3f(b.x)), b.y);
+    x = mix(x, set_lum(x, a.y), a.z);
     return x;
-}
-
-fn oklab(c: vec3f) -> vec3f {
-    let lms = pow(max(vec3f(
-        dot(c, vec3f(0.4122214708, 0.5363325363, 0.0514459929)),
-        dot(c, vec3f(0.2119034982, 0.6806995451, 0.1073969566)),
-        dot(c, vec3f(0.0883024619, 0.2817188376, 0.6299787005)),
-    ), vec3f(0.0)), vec3f(1.0 / 3.0));
-    return vec3f(
-        dot(lms, vec3f(0.2104542553, 0.7936177850, -0.0040720468)),
-        dot(lms, vec3f(1.9779984951, -2.4285922050, 0.4505937099)),
-        dot(lms, vec3f(0.0259040371, 0.7827717662, -0.8086757660)),
-    );
-}
-
-fn oklab_to_linear(lab: vec3f) -> vec3f {
-    let l = lab.x + 0.3963377774 * lab.y + 0.2158037573 * lab.z;
-    let m = lab.x - 0.1055613458 * lab.y - 0.0638541728 * lab.z;
-    let s = lab.x - 0.0894841775 * lab.y - 1.2914855480 * lab.z;
-    let lms = vec3f(l * l * l, m * m * m, s * s * s);
-    return vec3f(
-        dot(lms, vec3f(4.0767416621, -3.3077115913, 0.2309699292)),
-        dot(lms, vec3f(-1.2684380046, 2.6097574011, -0.3413193965)),
-        dot(lms, vec3f(-0.0041960863, -0.7034186147, 1.7076147010)),
-    );
 }
 
 // ---------------------------------------------------------------- backdrop sampling
@@ -272,28 +279,30 @@ fn bspline(uv: vec2f, mip: f32) -> vec3f {
     return g0.y * (g0.x * a + g1.x * b) + g1.y * (g0.x * c + g1.x * d);
 }
 
-// Backdrop at `q` (px) blurred by `sigma` (px): sharp source, then pyramid levels with
-// continuous interpolation between them.
+// Backdrop at `q` (px) blurred by `sigma` (px), display-encoded: sharp source, then pyramid
+// levels with continuous interpolation between them.
 fn frost(q: vec2f, sigma: f32) -> vec3f {
     let uv = q * globals.viewport.zw;
     let level = log2(max(sigma, 1e-4) / PYRAMID_SIGMA0) + 1.0;
     if level <= 0.0 {
-        return textureSampleLevel(src, samp, uv, 0.0).rgb;
+        return encode(textureSampleLevel(src, samp, uv, 0.0).rgb);
     }
     let top = globals.misc.y;
     if level < 1.0 {
-        return mix(textureSampleLevel(src, samp, uv, 0.0).rgb, bspline(uv, 0.0), level);
+        return mix(encode(textureSampleLevel(src, samp, uv, 0.0).rgb), bspline(uv, 0.0), level);
     }
     let l = min(level, top);
     let lo = min(floor(l), top - 1.0);
     return mix(bspline(uv, lo - 1.0), bspline(uv, lo), clamp(l - lo, 0.0, 1.0));
 }
 
-// Squircle bevel h(t) = (1 - (1 - t)^4)^(1/4): Apple's soft flat-to-curve profile.
-fn bevel_slope(t: f32) -> f32 {
+// Bevel h(t) = (1 - (1 - t)^n)^(1/n), t = 0 at the rim and 1 where the top is flat. n = 4 is
+// a squircle (flat almost to the edge: Regular glass); n = 2 a quarter circle, which bends
+// from far in (the wide squeezed band of Clear glass on iOS 27 devices).
+fn bevel_slope(t: f32, n: f32) -> f32 {
     let u = 1.0 - t;
-    let u3 = u * u * u;
-    return u3 * pow(max(1.0 - u3 * u, 1e-5), -0.75);
+    let un = pow(u, n);
+    return (un / max(u, 1e-5)) * pow(max(1.0 - un, 1e-5), 1.0 / n - 1.0);
 }
 
 // Lateral travel (in units of glass thickness) of a vertical ray refracted by a
@@ -334,14 +343,18 @@ fn fs_glass(v: Varyings) -> @location(0) vec4f {
     var dark = 0.0;
     if cov < 1.0 {
         let stats = textureSampleLevel(pyr, samp, center_uv, max(globals.misc.y - 4.0, 0.0));
-        let mean = luminance(stats.rgb);
-        let detail = sqrt(max(stats.a - mean * mean, 0.0));
+        let encoded_mean = luminance(stats.rgb);
+        let mean = luminance(decode(stats.rgb));
+        let detail = sqrt(max(stats.a - encoded_mean * encoded_mean, 0.0));
         // Apple: shadows grow over busy content (text), fade over flat light content.
         let adapt = mix(0.7, 1.6, smoothstep(0.02, 0.12, detail)) * mix(1.0, 0.65, smoothstep(0.5, 0.85, mean));
         var shadow = 0.0;
         if mat.shadow.z > 0.0 {
             let shadow_d = sdg_group(p - vec2f(0.0, mat.shadow.x), grp).x;
             shadow = mat.shadow.z * adapt * (1.0 - phi(shadow_d, mat.shadow.y));
+            // The opacity is Apple's, for a black layer composited over encoded pixels; this
+            // pass blends in linear light, where the same opacity would darken half as much.
+            shadow = 1.0 - pow(1.0 - clamp(shadow, 0.0, 1.0), 2.2);
         }
 
         var edge_dark = 0.0;
@@ -361,6 +374,8 @@ fn fs_glass(v: Varyings) -> @location(0) vec4f {
             // fixed burn clips to pure black (a jagged black outline), so the darkening is
             // capped and fades out where there is nothing light to define the edge against.
             edge_dark = min(darkening, 0.45) * smoothstep(0.12, 0.45, luminance(under));
+            // A knob at rest is a white fill on its track: only its lens gets the dark line.
+            edge_dark *= 1.0 - 0.8 * clamp(field.face, 0.0, 1.0);
         }
         dark = 1.0 - (1.0 - clamp(shadow, 0.0, 1.0)) * (1.0 - clamp(edge_dark, 0.0, 1.0));
         dark *= 1.0 - cov;
@@ -369,47 +384,43 @@ fn fs_glass(v: Varyings) -> @location(0) vec4f {
         return vec4f(0.0, 0.0, 0.0, dark);
     }
 
-    // Refraction through the squircle bevel, per channel for dispersion.
+    // Body zoom around the centre (iOS 27 knob lens: the track shows minified), then
+    // refraction through the squircle bevel on top, per channel for dispersion.
+    let q = field.attrs.yz + (p - field.attrs.yz) / max(mat.shadow.w, 0.05);
     let t = clamp(-d / depth, 0.0, 1.0);
-    let sigma = mat.optics.w;
+    // A knob's face frosts what shows through while it is still turning white.
+    let sigma = max(mat.optics.w, field.face * 8.0 * pt);
     var col: vec3f;
     if t < 1.0 && mat.optics.x > 0.0 {
-        let slope = bevel_slope(t);
+        let slope = bevel_slope(t, clamp(field.profile, 1.5, 8.0));
         let reach = mat.optics.x * depth;
         let disp = mat.optics.z * 0.25;
         let off_g = reach * refract_offset(slope, ETA);
         if disp > 0.0 {
             let off_r = reach * refract_offset(slope, ETA - disp);
             let off_b = reach * refract_offset(slope, ETA + disp);
-            col = vec3f(frost(p - n * off_r, sigma).r, frost(p - n * off_g, sigma).g, frost(p - n * off_b, sigma).b);
+            col = vec3f(frost(q - n * off_r, sigma).r, frost(q - n * off_g, sigma).g, frost(q - n * off_b, sigma).b);
         } else {
-            col = frost(p - n * off_g, sigma);
+            col = frost(q - n * off_g, sigma);
         }
     } else {
-        col = frost(p, sigma);
+        col = frost(q, sigma);
     }
     col *= 1.0 - mat.edge.w;
 
-    // Tone mapping: light and dark faces, chosen by scheme or by the backdrop.
-    var g = encode(col);
-    let top = max(globals.misc.y - 1.0, 0.0);
-    let bg = luminance(encode(textureSampleLevel(pyr, samp, center_uv, top).rgb));
-    // Small glass (adaptivity 1) flips at a backdrop of ~0.36, biased toward light: it only
-    // turns dark over genuinely dark content. Larger glass needs ever more contrasting content
-    // to flip, until (adaptivity 0) it never does and follows the scheme. Moving the threshold,
-    // rather than blending scheme and content by adaptivity, keeps the face fully light or
-    // fully dark: a 50/50 blend of the two faces is the flat grey Apple's glass never shows.
-    let scheme_edge = select(1.2, -0.2, globals.misc.z > 0.5);
-    let flip = mix(scheme_edge, 0.36, mat.optics.y);
-    // Narrow, so content only briefly sits in between, where the faces blend toward grey.
-    let lightness = smoothstep(flip - 0.06, flip + 0.06, bg);
+    // Tone mapping: the light or the dark face. Which one is decided per glass on the CPU
+    // (scene/legibility.rs), from the backdrop or the colour scheme, with hysteresis and a
+    // dwell; here it is only drawn, so every pixel of a glass agrees and the host's labels
+    // can follow the same decision. It is between 0 and 1 only while the face fades.
+    var g = col;
+    let lightness = mat.optics.y;
     g = mix(tone(g, mat.dark_a, mat.dark_b), tone(g, mat.light_a, mat.light_b), lightness);
 
-    // Stained-glass tint: keep hue and chroma, let lightness follow the backdrop.
+    // Tint (iOS 27 kit, "Glass Prominent"): a white backing at 94 % with the colour burnt into
+    // it. The glass becomes the colour itself and keeps a trace of the backdrop.
     if mat.tint.w > 0.0 {
-        let lab = oklab(decode(g));
-        let l = clamp(mat.tint.x + (lab.x - 0.65) * 0.6, 0.15, 0.97);
-        g = mix(g, encode(oklab_to_linear(vec3f(l, mat.tint.y, mat.tint.z))), mat.tint.w);
+        let backed = mix(g, vec3f(1.0), 0.94);
+        g = mix(g, max(backed + mat.tint.rgb - vec3f(1.0), vec3f(0.0)), mat.tint.w);
     }
 
     // Light: a crisp line just inside the edge, brightest facing the light, weaker on
@@ -445,6 +456,11 @@ fn fs_glass(v: Varyings) -> @location(0) vec4f {
             g += vec3f(mat.edge.x * lines);
         }
     }
+
+    // A knob at rest is a solid white face (the lens and its rims show through only as it
+    // lifts). It comes back from the centre out: the rim stays glassy longest (iOS 27).
+    let face = clamp(field.face, 0.0, 1.0);
+    g = mix(g, vec3f(1.0), pow(face, 1.0 + 3.0 * (1.0 - t)));
 
     // Touch: the glass lights up from the finger; the light spills onto nearby glass.
     let tp = p - globals.touch.xy;

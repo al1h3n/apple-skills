@@ -1,155 +1,137 @@
-# Design Rules: variants, colour, layering, legibility, accessibility
+# Design rules: variants, colour, layering, legibility, accessibility
 
-Rules that apply on every platform (SwiftUI, Web, Liquid Rust). Sources: HIG *Materials*
-and *Color* (updated Sep/Dec 2025), WWDC25 "Meet Liquid Glass", Apple's Figma kit.
+Hold on every platform (native, web, any engine). Read before choosing colours or stacking glass.
 
----
+## 1. Variants
 
-## 1. Variants and presets
-
-Apple exposes two material variants plus a no-op, and a tint modifier:
-
-| Preset | API | Use | Notes |
+| Variant | Native API | Use | Behaviour |
 |---|---|---|---|
-| **Regular** | `Glass.regular` / `UIGlassEffect.Style.regular` | default for everything: bars, buttons, menus, sidebars, popovers, anything with text | Adaptive: luminance compression, light/dark flip on small elements, shadow follows content. Works over any content |
-| **Clear** | `Glass.clear` / `.clear` | controls floating over **media** (photos, video, maps, lock screen) | Not adaptive, permanently more transparent. Needs a dimming layer when the media is bright |
-| **Tinted** | `Glass.regular.tint(color)` / `glassProminent` | the **one** primary action on screen (Done, Buy, Send) | Colour is tone-mapped to the backdrop ("stained glass"), never a flat fill |
-| Identity | `Glass.identity` | animation endpoint, conditional disable | renders nothing |
+| **Regular** | `Glass.regular` | Default. Bars, buttons, menus, sheets, anything with text | Adaptive tone. Small: flips light/dark with backdrop. Large: near-opaque face, follows scheme |
+| **Clear** | `Glass.clear` | Controls over **media** (photo, video, map, wallpaper) | Never flips. Almost no tint. White content |
+| **Tinted** | `.regular.tint(c)`, `.glassProminent` | The **one** primary action | Near-opaque colour (94 % white backing + accent burn [Kit]), glass rim |
+| Identity | `Glass.identity` | Transition endpoint, conditional off | Draws nothing |
 
-Never mix Regular and Clear in one group of controls [Apple].
-
-Use **Clear** only when all three hold [Apple]:
-1. it sits over media-rich content;
+Clear only when all three hold [Apple]:
+1. over media-rich content;
 2. a dimming layer will not hurt that content;
-3. the content on the glass is bold and bright (white glyphs, bold labels).
+3. content on the glass is bold and bright.
 
-Dimming for Clear: dark layer at **35 %** behind the component when the content is bright;
-skip it when the content is already dark or the player supplies its own dimming [HIG].
-Small controls can use *localized* dimming (just around the control) [Apple].
+Clear over bright media → dark layer **35 %** behind it [Apple]. Skip over dark media or when the player dims. Small control → dim locally, round the control only.
 
-### User-level appearance (system setting, not an API variant)
+Never mix Regular and Clear in one group [Apple].
 
-- iOS/iPadOS/macOS 26.1: Settings → Display & Brightness → Liquid Glass → **Clear | Tinted**.
-  Tinted "increases opacity and adds more contrast".
-- iOS/iPadOS/macOS 27: replaced by a **slider from "ultra clear" to "fully tinted"**.
-- Native apps get this for free. Custom renderers (web, Liquid Rust) should expose the same
-  knob (0 = ultra clear, 0.5 = default, 1 = fully tinted) and honour
-  `prefers-reduced-transparency` / Reduce Transparency by pushing it toward 1.
+### User setting
 
-## 2. Colour: where to put it
+Settings → Appearance: **transparency slider, "ultra clear" → "fully tinted"** [Apple]. Native apps: free. Custom renderer: expose one 0…1 knob (0 clear, 0.5 default, 1 tinted) mapped to tone opacity + frost. Reduce Transparency → push toward 1. Clear-mode app icons ignore the slider (pinned) [Apple].
 
-> "By default, Liquid Glass has no inherent color, and instead takes on colors from the
-> content directly behind it." — HIG
+## 2. Colour
 
-Decision table (answers "tint the shape or the icon?"):
+> "By default, Liquid Glass has no inherent color, and instead takes on colors from the content directly behind it." [Apple]
 
-| Goal | Put colour on | Example |
+| Goal | Colour goes on | Example |
 |---|---|---|
-| Mark the **primary action** | the glass **background** (`.tint()` / prominent style), white label | Done, Checkout, "View Bag" in red |
-| Show **state** of a toggle inside a glass panel | an **opaque solid circle** in the system colour behind the glyph, not glass | Control Center Wi-Fi `#0088FF`, Cellular `#34C759` |
-| Convey **meaning of a value** (brightness, volume, battery) | the **glyph/fill**, glass stays neutral | sun `#FFCC00`, speaker `#00C0E8` |
-| Destructive menu row | text + symbol in system red, no background | "Remove App" `#FF383C` |
-| Brand presence | the **content layer**, not the glass | hero images, cards |
-| Toolbar/tab bar over colourful content | nothing: keep glyphs **monochrome** (they flip black/white automatically) | Photos, Maps |
-| Toolbar over monochrome content | app accent colour on glyphs is fine | Notes, Settings |
+| Primary action | glass **background** (tinted) | Done, Buy, Send |
+| Toggle state inside a glass panel | opaque system-colour **circle** behind white glyph. Not glass | Wi-Fi `#0088FF` |
+| Meaning of a value | **glyph / value text**, glass neutral | brightness sun, a "good" value in blue with a check [M7] |
+| Destructive row | text + symbol in system red, no background | Remove App `#FF383C` |
+| Selection | burn capsule (neutral). Accent on the label only **after** it settles (+0.2 s) [M8] | camera mode strip |
+| Brand | content layer | hero image |
+| Bar over colourful content | nothing: monochrome glyphs | Photos |
 
 Hard rules:
-- **Tint at most one or two elements per screen.** "When every element is tinted, nothing
-  stands out" [Apple]. Refrain from colouring the background of multiple controls [HIG].
-- To emphasise a primary action, colour the **background**, not the symbol/text [HIG].
-- Don't use similar hues for labels and for a colourful backdrop.
-- Use system colours (they ship light, dark and increased-contrast variants). A custom
-  colour needs all four variants.
-- A solid opaque fill on a glass button "breaks the visual character of Liquid Glass" —
-  always go through the tint path, which maps the colour to backdrop brightness [Apple].
-- Glyph colour on Regular glass should be *adaptive* (label/secondaryLabel), so it flips
-  with the glass. Hard-coded white glyphs only on Clear glass over dark/dimmed media.
+- **One tinted control per screen**, two at most. "When every element is tinted, nothing stands out" [Apple].
+- Tinted control appears **when it becomes usable**, not before [M8].
+- **Label on tint by contrast**: white on blue/red/green, near-black on yellow [M8]. Never fixed white.
+- Emphasis → colour the background, not the symbol [Apple].
+- System colours (light, dark, increased-contrast variants ship). Custom colour → supply all four.
+- No flat opaque rectangle pretending to be a glass button: keep rim, hairline, shadow.
+- Glyphs on Regular glass = vibrant label colours, flip with the glass. Fixed white only on Clear.
 
-How Apple tints (to reproduce it): pick the tint in a perceptual space (OKLCH works),
-keep **hue**, keep most **chroma**, and drive **lightness** from the luminance of the
-frosted backdrop within a narrow band around the tint's own lightness. Result: the colour
-reads as the same tint everywhere but brightens over light content and deepens over dark
-content, like stained glass.
+Accents [Kit]: blue `#0088FF` (dark `#0091FF`; increased contrast `#1E6EF4` / `#5CB8FF`), red `#FF383C` (`#FF4245`), green `#34C759`.
 
-## 3. Layering: glass on glass
+## 3. Layering
 
-> "Always avoid glass on glass. … When placing elements on top of Liquid Glass, avoid
-> applying the material to both layers. Instead, use fills, transparency, and vibrancy for
-> the top elements to make them feel like a thin overlay that is part of the material."
-> — WWDC25 "Meet Liquid Glass"
+> "Always avoid glass on glass." [Apple]
 
 | Situation | Do |
 |---|---|
-| Button/icon inside a glass panel | plain shape + vibrant fill (see anatomy §2.5) or solid semantic colour. **No second glass.** |
-| Several glass controls next to each other | one `GlassEffectContainer` (one render pass, they can merge/morph). Glass can't sample glass, the container solves it |
-| Segmented control / selection pill inside a glass bar | a vibrant fill pill; Apple only "lifts" it into glass *while dragging* (liquid lens), then drops back to a fill |
-| Menu or popover opening from a glass button | morph the button into the menu (same container + `glassEffectID`), don't stack a second glass on top |
-| Unavoidable stacking (sheet over a toolbar, overlay over a tab bar) | upper glass must be **Regular** (thicker, more opaque); it must sample the *rendered* lower glass; never Clear over glass |
-| Glass over a dimming layer (alert, sheet) | fine: the dim layer is content, not glass |
-
-Liquid Rust implements the unavoidable case correctly: each z-layer samples a backdrop that
-includes lower glass, and the backdrop is rebuilt **only** for the screen region where the
-upper layer overlaps lower glass. `scene.glass_on_glass = false` follows Apple's stricter rule
-instead (each layer refracts only the content and covers the glass below). Fused glass in one
-container keeps each member's own material, so a tinted primary button can share a liquid
-body with plain ones (see `liquid-rust.md`).
+| Button or icon inside a glass panel | fill + vibrancy (`anatomy.md` §5), or solid semantic colour. No second glass |
+| Several glass controls side by side | one container: one pass, they merge and morph |
+| Selection inside a glass bar | burn capsule. Lifts into a lens only **while held/dragged**, drops back to fill |
+| Menu, popover, sheet from a glass button | the button **becomes** it (one shape). Button absent while open [M7] |
+| Unavoidable stack (sheet over toolbar) | upper = Regular (panel, near-opaque). Never Clear over glass |
+| Glass over a dim layer | fine: dim = content |
+| Full-height sheet | opaque. Only partial-height sheets are glass [Kit] |
 
 ## 4. Where glass belongs
 
-- **Only the functional layer** (navigation, toolbars, tab bars, floating buttons, sheets,
-  menus, popovers, sliders/toggles while interacting). Never list rows, cards, body text,
-  backgrounds [HIG].
-- Exception: content-layer sliders/toggles **turn into** glass while the finger is on them.
-- Use it sparingly; limit custom glass to the most important elements [HIG].
-- In steady state (e.g. first launch) avoid intersections between content and glass —
-  reposition content instead [Apple].
-- Concentric corners: inner radius = outer radius − padding (`ConcentricRectangle`,
-  `.containerConcentric`). Capsules for small controls; rounded rects with **continuous
-  (squircle) corners** for big ones (iOS = Figma smoothing 60 %). This applies to glass
-  *and* to fills sitting on glass (sub-buttons, album art, folder tiles). Use plain circular
-  corners only for hardware-matched shapes (Dynamic Island) and tiny dots. Never mix
-  circular and continuous corners within one cluster: the mismatch is visible in the rim
-  highlight. See `anatomy.md` §2.7.
+- **Functional layer only**: navigation, toolbars, tab bars, floating buttons, partial sheets, menus, popovers. Never list rows, cards, body text, backgrounds [Apple].
+- Exception: content-layer knob (slider, switch) turns into a lens **while pressed** [Apple][Kit].
+- Sparingly: custom glass on the most important functional elements only [Apple].
+- **Not glass in Apple's own kit**: segmented controls, steppers, text fields, lists, table rows, content-area buttons, keyboard keys, page control (Ultrathin material), iPad popovers (Thick material), macOS tooltips (Ultra Thick), macOS window sidebars (vibrancy), Lock Screen widgets (blur + dodge), full-height sheets, macOS windows [Kit].
+- **Inactive window → no glass**: controls fall back to a flat fill [Kit].
+- Bar changing mode keeps its title slot fixed; only buttons change [M3].
+- Concentric corners: inner radius = outer − padding. Capsules for small controls, continuous corners for panels and for fills on them (`anatomy.md` §7).
+- Steady state: no content/glass intersections left by accident; move the content [Apple].
 
 ## 5. Legibility
 
-- Regular glass self-adapts; Clear needs dimming.
-- Scroll edge effects: soft fade under floating bars; **hard** style when pinned accessory
-  views (column headers) sit under the toolbar [Apple].
-- Text on glass: SF semibold or bolder for small sizes; use vibrant label colours, not
-  fixed greys. Vibrancy on the web = `mix-blend-mode: plus-lighter` for light-on-dark
-  (Apple kit: LINEAR_DODGE) and `plus-darker` / `multiply` for dark-on-light (kit: LINEAR_BURN).
-- Big glass with lots of text (menus, sidebars, alerts) → Regular, larger is more opaque.
+Decide **per glass element, on CPU, from backdrop luminance under it**. Never per pixel. Never guess in the host.
 
-## 6. Accessibility (must be honoured by custom renderers)
+| Kind | Behaviour |
+|---|---|
+| Small Regular with glyphs (bar buttons, tab bars, capsules) | **Adaptive, ignores theme.** Whole element light with dark glyphs, or dark with light glyphs. Members of one container decide together [M8] |
+| Large Regular with text (menus, sheets, banners, sidebars, alerts) | **Follows colour scheme.** Face opacity carries legibility [M4][Kit] |
+| Clear | Never flips. White content. Dim backdrop 35 % when bright |
+| Tinted | Tint decides; label by contrast |
 
-| Setting | Native effect [Apple] | Custom renderer should |
+Timing [M8]:
+
+| Direction | Dwell | Glyph switch | Face |
+|---|---|---|---|
+| → light (white glyphs would vanish) | 0 | ≤ 33 ms | ≈ 0.25 s |
+| → dark | 0.1 s | at face midpoint (Apple switches at start → 0.15 s contrast dip; do better) | ≈ 0.4 s |
+
+- Light face only over a **clearly light** backdrop. Mid-tones → dark face, white glyphs.
+- Hysteresis between two thresholds: boundary scrolling under a bar must not flicker.
+- Before first sample: scheme. Snap (no fade) while the glass is still materializing.
+
+Overrides: per glass `Adaptive | Scheme | Light | Dark`; one global lock to theme for products wanting a fixed look. Host reads the resolved tone and colours labels from it.
+
+Also:
+- Scroll edge effect under floating bars: **soft** = background blur 10 behind a gradient mask; **hard** = `#FFFFFF@85%` + blur 6, for pinned accessories under a toolbar [Kit][Apple].
+- Text on glass: semibold or heavier at small sizes; vibrant label colours, never a fixed grey.
+- Much text → Regular panel.
+
+## 6. Accessibility
+
+| Setting | System [Apple] | Custom renderer |
 |---|---|---|
-| Reduce Transparency | frostier, obscures more content | frost ×3, face opacity → high, refraction ↓ |
-| Increase Contrast | elements mostly black/white with a contrasting border | flatten tint, add 1 pt border in label colour |
-| Reduce Motion | lower intensity, **no elastic** properties | springs critically damped (bounce 0), no stretch, no press scale |
-| Transparency slider (27) | ultra clear → fully tinted | expose 0…1 knob mapped to frost + face opacity; tinted = near-black (`#1C1C1E`) or white faces, never mid grey |
-| Web | — | `prefers-reduced-transparency`, `prefers-contrast`, `prefers-reduced-motion` |
+| Reduce Transparency | frostier, hides more | frost ×3, tone opacity high, refraction down |
+| Increase Contrast | mostly black/white, contrasting border | flatten tint, 1 pt border in label colour, increased-contrast accents |
+| Reduce Motion | lower intensity, no elastic | bounce 0, no press scale, no travel, cross-fades stay (`motion.md` §6) |
+| Transparency slider | ultra clear → fully tinted | §1 knob |
+| Web | none | `prefers-reduced-transparency`, `prefers-contrast`, `prefers-reduced-motion`, `prefers-color-scheme` |
 
-## 7. Motion rules (summary — details in `motion.md`)
+Also: 44 pt targets on glass controls (kit toolbar buttons 44–48). Focus ring visible on glass (keyboard, pointer). Contrast checked against **both** tones the glass can take.
 
-- Everything is a **spring**, retargetable mid-flight, velocity preserved.
-- Press: fast (≈0.25 s) spring up; release: bouncy (bounce ≈0.3) settle.
-- Morph and layout changes: `.smooth` / `.snappy`.
-- Drag of a lens/knob: follow tightly, stretch along velocity, jelly-settle on stop.
-- Never animate glass with linear/ease curves or alpha crossfades.
-
-## 8. Anti-patterns
+## 7. Anti-patterns
 
 | Don't | Because |
 |---|---|
-| Glass on every card/list row | competes with content, muddy hierarchy |
+| Glass on every card / row | competes with content |
 | Tint every button | nothing stands out |
-| Solid colour fill on a glass button | breaks the material |
-| Glass inside glass | clutter, double refraction; use fills/vibrancy |
-| Clear glass over plain UI | illegible; Clear is for media only |
-| Mixing Regular and Clear in one toolbar | inconsistent material |
-| Big blur + white overlay | that's 2020 glassmorphism |
-| Fixed white glyphs on Regular glass | won't flip when the glass goes light |
-| Alpha-fade glass in/out | Apple materializes via lensing |
-| Collision physics between glass blobs | Apple merges geometrically (SDF union), it never "bumps" |
+| Glass in glass | double refraction; use fills |
+| Clear over plain UI | unreadable; Clear = media only |
+| Regular + Clear in one bar | two materials, one group |
+| Big blur + white overlay | 2020 glassmorphism |
+| White 1 px border | Apple darkens the outside, lights the inside |
+| One top-left specular blob | rim is top + bottom |
+| Fixed white glyphs on Regular | vanish when glass goes light |
+| Per-pixel light/dark text | flicker, unreadable words |
+| Alpha-fade glass in/out | materialize through lensing |
+| Second glass on top of the button for its menu | one shape grows |
+| Neighbours bulging/fusing on press | removed in 27; noise |
+| Collision physics between blobs | merge is geometric (SDF) |
+| Rainbow rim on controls | dispersion stays faint, zero on pressed lens |
+| Ease-in on something a finger sent | launch it (`motion.md`) |

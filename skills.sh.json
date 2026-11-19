@@ -4,13 +4,11 @@
   "groupings": [
     {
       "title": "Apple Design System",
-      "description": "Skills for Apple Human Interface Guidelines, iOS interface design, and Liquid Glass materials.",
+      "description": "Apple-grade UI craft, iPhone and iPad interface design, and the Liquid Glass material (current as of iOS / macOS 27).",
       "skills": [
         "liquid-glass",
-        "ios",
         "apple-ui",
-        "liquid-glass-skill",
-        "apple-ui-skill"
+        "ios"
       ]
     }
   ]

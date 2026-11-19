@@ -1,217 +1,214 @@
 # Liquid Rust: the engine
 
-Crate [`liquid-rust`](https://crates.io/crates/liquid-rust) **0.2.5** (source:
-`github.com/al1h3n/liquid-rust`, docs: docs.rs/liquid-rust), on wgpu 30, edition 2024,
-Rust 1.99+. It is a library that works in any project: native (Vulkan, Metal, DX12, GL) and
-the web (WebGPU via wasm, `web/`). Its shaders are the ones in this skill's `assets/`.
+Crate [`liquid-rust`](https://crates.io/crates/liquid-rust) **0.3.0** (source
+`github.com/al1h3n/liquid-rust`, docs docs.rs/liquid-rust). wgpu 30, edition 2024, Rust 1.99+.
+Native (Vulkan, Metal, DX12, GL) and the web (WebGPU through wasm). Its shaders are this
+skill's `assets/`. Web packages on top: `bits-ui.md`.
 
 ```toml
-[dependencies]
-liquid-rust = "0.2"
+liquid-rust = "0.3"                                          # scene + renderer + kit
+liquid-rust = { version = "0.3", default-features = false }  # scene only: no wgpu, testable anywhere
 ```
 
-## When to use it
+Features: `render` (the wgpu `Renderer`), `kit` (headless components). Both on by default.
 
-- Rust apps on any GPU UI stack (winit, egui/iced custom painters, Bevy UI overlays, Tauri
-  canvases) that need real Liquid Glass.
-- Web pages through `wasm-pack`, see `webgpu.md` §2.
-- Not inside native Apple apps: use `glassEffect` there (`native-apple.md`).
+## When
+
+- Rust apps on any GPU stack (winit, egui / iced painters, Bevy overlays, Tauri canvases).
+- Web pages: through `liquid-rust-web` (`bits-ui.md`), not by hand.
+- Not native Apple apps: `glassEffect` there (`native-apple.md`).
+
+## Two halves
+
+| | Needs | Holds |
+|---|---|---|
+| `Scene` | `glam`, `slotmap` | glass, containers, pointers, springs, morphs, legibility, display list |
+| `Renderer` | wgpu 30 | blur pyramid, glass shader, glass-on-glass layers, backdrop read-back |
+
+A renderer of your own can draw `scene.drawables(.., &mut list)` (`Drawables`: shapes,
+groups, light, glow, masks).
 
 ## API in one screen
 
 ```rust
-use liquid_rust::*;   // Scene, Glass, Rect, Shape, Material, Color, Tone, Shadow,
-                      // Appearance, Spring, Animated, Container(Id), GlassId, Renderer, Frame, Vec2
+use liquid_rust::*;
 
 let mut scene = Scene::new();
 scene.appearance = Appearance { dark: false, transparency: 0.5, ..Default::default() };
+scene.feel = Feel::V27;                                   // V26: the louder release, for A/B
 
-let bar = scene.add_container(14.0, 0);                  // spacing pt (merge distance), z
-let a = scene.add(Glass::new(Rect::new(24.0, 24.0, 52.0, 52.0)).interactive().container(bar));
-let lens = scene.add(Glass::new(Rect::new(40.0, 300.0, 90.0, 90.0)).material(Material::clear()).lens());
-let ok = scene.add(Glass::new(Rect::new(300.0, 24.0, 110.0, 52.0)).interactive());
-scene.add(Glass::new(Rect::new(20.0, 600.0, 360.0, 300.0)).shape(Shape::Rounded(34.0)).z(1)); // glass over glass
+let bar = scene.add_container(16.0, 0);                   // spacing = merge distance, z
+let b = scene.add(Glass::new(Rect::new(24.0, 24.0, 44.0, 44.0)).interactive().container(bar));
+let cta = scene.add(Glass::new(r).material(Material::tinted(Color::BLUE)).interactive());
+let panel = scene.add(Glass::new(r).shape(Shape::Rounded(34.0)).material(Material::panel()).z(1));
 
-// Layout
-scene.set_frame(a, Rect::new(24.0, 90.0, 250.0, 300.0));  // morph (snappy spring)
-scene.set_frame_with(a, r, Spring::new(0.45, 0.25));       // custom spring
-scene.place(a, r);                                         // jump, no spring (window resize, scroll)
-scene.set_frame_launched(a, r, Spring::EMERGE);            // a tap sends it: full speed, exponential landing (0.2.6)
+// Motion
+scene.place(b, r);                                        // jump: layout, scroll, resize
+scene.set_frame_launched(b, r, Spring::EMERGE);           // a tap sent it: full speed, exponential landing
+scene.set_frame_with(b, r, Spring::SMOOTH);               // a change nobody sent
+scene.fling(sheet, r, velocity, Spring::FLICK);           // let go mid-flick
+let menu = scene.morph_from(b, Glass::new(r).shape(Shape::Rounded(28.0)).z(1), Spring::EMERGE); // one shape
+scene.shrink_into(menu, b, Spring::RECEDE);               // back into its button, dropped on landing
+scene.expand_from(field, results, Spring::new(0.5, 0.2)); // two shapes joined by a liquid neck
+scene.collapse_into(results, field, Spring::new(0.35, 0.0));
+scene.set_present(id, false);                             // materialize / dematerialize by lensing
+scene.remove(id);
 
-// A menu opening from its button (0.2.6): the button becomes the menu, no liquid neck
-let menu = scene.morph_from(a, Glass::new(r).shape(Shape::Rounded(28.0)).z(1), Spring::EMERGE);
-scene.shrink_into(menu, a, Spring::RECEDE);                // launched back, dropped on landing
+// Material, shape, light
+scene.set_material_with(cta, Material::tinted(Color::BLUE), Spring::new(0.3, 0.0)); // fade (never through black)
+scene.set_shape(b, Shape::Rounded(28.0));
+scene.set_light_angle(45.0);
 
-// Any animated value can launch (Animated::launch_to): x(t) = x0·e^(−ω0·t) at bounce 0
-let mut v = Animated::new(0.0, Spring::EMERGE);
-v.launch_to(1.0, Spring::EMERGE, 1.0);
-scene.set_shape(a, Shape::Rounded(28.0));                  // instant outline change
-scene.set_container_spacing(bar, 20.0);                    // 0 = no merging
-scene.remove(a);                                           // dematerialize, then dropped
+// Input: several pointers at once
+scene.pointer_down(PointerId::MOUSE, p);                  // -> Option<GlassId>
+scene.pointer_move(PointerId::MOUSE, p);                  // a held control leans after the finger
+scene.pointer_up(PointerId::MOUSE);
+scene.hit_test(p);
 
-// Material
-scene.set_material(ok, Material::regular());               // instant (cancels a running fade)
-scene.set_material_with(ok, Material::tinted(Color::BLUE), Spring::new(0.3, 0.0)); // fade
-
-// Grow one glass out of another, and back
-let results = scene.expand_from(a, Glass::new(r).shape(Shape::Rounded(28.0)), Spring::new(0.5, 0.2));
-scene.collapse_into(results, a, Spring::new(0.35, 0.0));
-
-// Input and light
-scene.set_light_angle(45.0);                               // device tilt / focus sweep
-scene.pointer_down(p); scene.pointer_move(p); scene.pointer_up();   // points; down returns Option<GlassId>
-scene.hit_test(p);                                         // topmost interactive glass or lens
-scene.current_frame(a); scene.current_corner(a);           // on screen now, mid-animation
-
-// Switches
-scene.physics = false;                                     // every change lands on the next update
-scene.glass_on_glass = false;                              // Apple's "glass can't sample glass"
-scene.appearance.adapt_to_content = false;                 // small glass follows the scheme
+// Legibility: the host asks, never guesses
+scene.set_backdrop_rgba8(area, w, h, &pixels);            // or renderer.read_backdrop(&device, &mut scene)
+scene.ink_of(id);                                         // Ink::Dark | Ink::Light for labels
+scene.content_of(id);                                     // frame, corner, ink, opacity, softness for content
+scene.luma_under(id);                                     // dim bright media under Clear
 
 // Frame
-let mut renderer = Renderer::new(&device, surface_format); // once per target format
-let animating = scene.update(dt);                          // false → stop requesting frames
+let moving = scene.update(dt);                            // false: stop asking for frames
 renderer.render(&device, &queue, &mut encoder,
-    &Frame { content, target, size, scale, content_changed }, &scene);
+    &Frame { content, target, size, scale, content_changed, overlay: false }, &scene);
+let reading = renderer.read_backdrop(&device, &mut scene); // true while a read-back is in flight
 ```
 
-Shapes: `Shape::Capsule`, `Shape::Rounded(r)` (Apple continuous squircle, smoothing
-`IOS_SMOOTHING` = 0.6, the default for panels), `Shape::Circular(r)` (quarter circles), and
-`Shape::Smooth { radius, smoothing }` (any Figma smoothing 0–1). `smooth_corner(r, s, budget)`
-exposes the Figma-to-superellipse mapping for your own drawing or hit-testing.
-
-Drawing plain (non-glass) squircles is a different job: vector paths for SVG, icons or a 2D
-renderer. Don't add it to Liquid Rust, and don't start a new crate for it either:
-`figma_squircle` (Figma-exact SVG paths) and `smooth-frame` (Sketch-style Bézier paths)
-already exist on crates.io. Liquid Rust only needs the distance field, and that lives in
-`glass.wgsl` / `scene.rs`.
+## Types
 
 | Type | Role |
 |---|---|
-| `Material` | All knobs, named after Figma's GLASS panel. Presets: `regular()`, `clear()`, `clear_bar()`, `tinted(c)`, `identity()`, and `.tint(c)` |
-| `Tone` | the kit's "Fill + Shadow" fills (lift / luminosity / lighten / darken) |
-| `Appearance` | `dark`, `transparency` (iOS 27 slider), `reduce_transparency`, `increase_contrast`, `reduce_motion`, `adapt_to_content` |
-| `Spring` / `Animated` | Apple's duration/bounce springs (`SMOOTH`, `SNAPPY`, `BOUNCY`, `INTERACTIVE`), solved analytically; bounce is clamped to ±0.95 so everything comes to rest |
-| `Container` | `GlassEffectContainer`: spacing = merge distance, z = layer |
-| `Renderer` / `Frame` | wgpu passes; one renderer per target format (and per pass with `render_layers`) |
+| `Glass` | builder: `.shape()`, `.material()`, `.interactive()`, `.role(Role)`, `.legibility(Legibility)`, `.container(id)`, `.z(n)` |
+| `Shape` | `Capsule`, `Rounded(r)` (continuous, 60 % smoothing), `Circular(r)`, `Smooth { radius, smoothing }`, `Mask(MaskId)` |
+| `Material` | Figma GLASS knobs + `profile` (bevel exponent: 4 squircle Regular, 2 quarter circle Clear / Dock) + `dim`, `magnify`, `tint`. Presets `regular()` (thickens into the panel by size), `panel()`, `clear()`, `dock()`, `lens()`, `tinted(c)`, `identity()` |
+| `Role` | `Surface` (no input), `Control`, `Lens { press, slide }`, `Knob { slide }` |
+| `Legibility` | `Auto`, `Backdrop`, `Scheme`, `Light`, `Dark` |
+| `Appearance` | `dark`, `transparency`, `reduce_transparency`, `increase_contrast`, `reduce_motion`, `adapt_to_content` |
+| `Spring` | closed form; `SMOOTH`, `SNAPPY`, `BOUNCY`, `INTERACTIVE`, `EMERGE` (0.45 s), `RECEDE` (0.3 s), `FLICK`, `ARRIVE`, `KNOB_SETTLE`, `KNOB_TRAVEL` |
+| `Motion::ALL` | 20 named motions with their spring and whether launched |
+| `Feel` | what a finger does: press growth (+5 pt, cap 15 %), launch times, glow out, lens lift, knob lift, `press_pull` lean, `pull_release`. `V27`, `V26` |
+| `MaskField` / `MaskId` | a baked silhouette (512-texel signed distance + normal) |
 
-## Behaviour to know (0.2.x)
+## Mask glass
 
-- **Launched motion and the one-shape morph (0.2.6).** Fitted to a frame-by-frame iOS 27
-  recording (`motion.md` §2): `Spring::EMERGE` (0.45 s) and `Spring::RECEDE` (0.3 s) with
-  `Animated::launch_to` / `Scene::set_frame_launched` start at full speed and land
-  exponentially. `morph_from` grows new glass *as* its source (its frame, outline, full
-  presence) without joining the source's container, so no neck forms and the button never
-  bulges; give it a higher z so it covers the button. `shrink_into` launches it back and drops
-  it on landing. Use `expand_from` / `collapse_into` only when you *want* a liquid neck (two
-  shapes that stay separate objects, like a search bar and its suggestions).
-- **Calmer drag (0.2.6).** Stretch is capped at 10 % (was 25 %) and settles at `0.3 s, 0.1`
-  (was `0.35 s, 0.4`); a released lens drops on `Spring::KNOB_SETTLE` launched (≈0.1 s) instead
-  of `.snappy`. iOS 27 shows no jelly; the old values read as the shape being squeezed and
-  smashed.
+```rust
+let digits = scene.add_mask(&alpha, width, height);        // 128+ is inside; bake once
+scene.add(Glass::new(frame).shape(Shape::Mask(digits)).material(Material::clear()));
+```
 
-- **Fused glass keeps its own material (0.2.5).** Each shape in a container carries its own
-  material, resolved for its own size; across the liquid neck the materials blend with the
-  same smooth-min weights as the outline. A tinted button pressed against a plain one stays
-  tinted; a thin bar fused to a big panel stays thin. Before 0.2.5 the whole group took the
-  material of the glass added first, so don't work around that any more.
-- **Material fades (0.2.5).** `set_material_with(id, m, spring)` fades every knob, and a tint
-  fades in by its strength (never through black). Interrupting carries on from what is on
-  screen. Use it for a primary button's tint appearing once the action becomes available.
-- **Transparency slider (0.2.4).** Toward "fully tinted", the dark face goes to near-black
-  `#1C1C1E` at about 70–85 % and the light face to white at about 70–88 %; nothing is pulled
-  toward mid grey any more. Apps that capped `transparency` at 0.5, or darkened/whitened their
-  own panes to hide the grey, can drop that workaround. Reduce Transparency uses the same
-  tinted faces plus heavy frost.
-- **Adaptivity.** Regular glass always takes the light *or* the dark face, never a 50/50 grey
-  blend. Small glass (buttons, tab bars) flips with the content; from about 180 pt (menus,
-  panels) it follows the colour scheme. `appearance.adapt_to_content = false` keeps small
-  glass on the scheme too (labels that follow the scheme).
-- **Glass on glass.** By default a higher z-layer refracts the glass that is really under it,
-  rebuilt only where layers overlap. `scene.glass_on_glass = false` follows Apple's rule:
-  every layer refracts the content alone and covers the glass beneath it (menus over
-  toolbars). Presses always go to the topmost glass.
-- **Labels under upper glass.** Labels drawn after `render` are on top of everything. When an
-  upper layer (a lens over a menu) should bend the labels of lower layers, split the frame:
+Bends, lights, shadows and fuses like any glass. The frame should have the mask's aspect;
+presses hit the frame. `MaskField::from_alpha` bakes off-thread; pass an `Arc<MaskField>` to
+`add_mask_field` to share a bake between scenes (the renderer then skips the upload). Native
+only so far (no web call). Uses: Lock Screen digits, glyph glass, app icons (LIGMA).
 
-  ```rust
-  lower.render_layers(&device, &queue, &mut encoder, &Frame { content: &content_view, target: &middle_view, size, scale, content_changed }, &scene, ..2);
-  // draw the labels of layers 0 and 1 into `middle`
-  upper.render_layers(&device, &queue, &mut encoder, &Frame { content: &middle_view, target: &target_view, size, scale, content_changed: true }, &scene, 2..);
-  ```
+## Kit (feature `kit`)
 
-  Use one `Renderer` per pass; each keeps the blur of its own content.
-- **Merge distance.** Below half the container spacing shapes join with a liquid neck; at the
-  full spacing they are clean. Rest shapes either under half (joined) or at least the full
-  spacing apart: a neck that breaks just as motion stops reads as a glitch.
-- **Physics off vs Reduce Motion.** `scene.physics = false` makes every change land on the next
-  `update` (no springs, press growth, lens lift or stretch): static UI, tests, layout work.
-  `appearance.reduce_motion` is gentler: it keeps the motion and drops the bounce.
-- **Bad input is absorbed.** A `0 × 0` render size is skipped; NaN `dt` counts as zero; a NaN
-  or infinite coordinate leaves that value where it was; springs at large values (thousands of
-  points) still come to rest, so `scene.update` always ends up returning `false`.
+Headless: the engine owns glass and choreography, the host draws the rest where `slots()` /
+`content()` say. Sizes in `kit::metrics::{ios, macos}`.
+
+| Component | Engine | Host draws |
+|---|---|---|
+| `Switch`, `Slider` | knob, lens while held, taps, drags, steps | track and fill |
+| `Selection` | segmented / tab selection: slides, lifts into a lens | items; the fill at rest |
+| `Menu` | surface out of its control and back (`morph_from` / `shrink_into`) | rows |
+| `Sheet` | detents, follows the finger, carries its speed, thrown away | content |
+| `Banner` | arrives from where notifications live, leaves there | content |
+
+```rust
+let mut switch = kit::Switch::add(&mut scene, origin, metrics::ios::SWITCH_TRACK, metrics::ios::KNOB, false, 0);
+if switch.pointer_down(&mut scene, pointer, p) { /* took it */ }
+if let Some(on) = switch.pointer_up(&mut scene, pointer) { /* changed */ }
+```
+
+A button is glass with `.interactive()`; alerts and popovers are `panel()`. `Material::dome()`
+is a held point as a magnifying dome (no flat top, minified middle, mirrored rim).
+
+Web core extras: `magnifyDock(items, x, most = 2.4, reach = 3)` (layout magnification with a
+fast spring; size items with `--lg-magnify`), `genie` (strips mapped onto exact quads,
+`stripMatrix`), `dragWindow(event, offset, move)`, `stackBanner(element)` (banners open
+together pile up), `fillTint(rgb, dark)` (a flat fill drawn as tinted glass at its exact
+colour). Kit `Window`: `sidebar` (flush with the window, macOS 27; `inset` floats it, macOS 26),
+`movable` (drag the bar, double-click zooms), `offset`; glass inside it is CSS; the scroll
+edge band shows only while content is under the toolbar. Kit `Banner`: banners open together
+stack (newest in front, older ones smaller behind it), swipe up or × closes, `onactivate`
+opens, `actions` puts buttons along the bottom (Mac). The layer marks
+`data-lg-transparency="clear" | "tinted"` so the CSS renderer follows the slider's ends.
+
+## Behaviour to know
+
+- **Launched motion.** Finger-sent things leave at full speed and only slow (`launch_to`);
+  the first frame covers a fifth or more of the way. No ease-in.
+- **One shape.** While a `morph_from` surface is out, its source is not drawn; it lands back
+  without a pixel changing. A source fused to neighbours leaves their union on frame 1: rest
+  such buttons a full spacing apart.
+- **Lean.** A held control follows a sliding finger with a rubber band (shift 0.6 of the band,
+  a little stretch) and springs home on release (`Feel::press_pull`, `pull_release`).
+- **Interrupted fades** keep both ends (`FadeEnd`): reversing mid-fade carries on from the screen.
+- **Fused glass keeps its own material** per shape, blended across the neck.
+- **Adaptivity.** Regular takes the light or the dark face, never grey. Small glass flips with
+  content (to light instantly, to dark after 0.1 s), from about 180 pt it follows the scheme;
+  a container decides together.
+- **Glass on glass.** Default: upper layers refract the glass under them, rebuilt only where
+  layers overlap. `scene.glass_on_glass = false`: Apple's "glass can't sample glass".
+- **Labels under upper glass:** split the frame with `render_layers(.., ..2)` → labels →
+  `render_layers(.., 2..)`, one `Renderer` per pass.
+- **Physics off** (`scene.physics = false`): everything lands on the next update (tests,
+  static UI). **Reduce Motion**: keeps motion, drops bounce, press growth and lean.
+- **Overdrag and motion blur.** `Slide::pull(share)`: how far a knob follows past an end, as
+  a share of its width (0.2 default; about 1 follows the pointer off the track, macOS 27).
+  `Glass::motion_blur(seconds)` / `scene.set_motion_blur`: a moving glass is drawn with soft
+  edges along its path (1/60 s for a flung knob); none when still or with Reduce Motion.
+  `kit::Slider::set_style(scene, pull, motion_blur)`; web `partStyle`; kit `Slider pull
+  motionBlur` props.
+- **The person's own amounts.** `Appearance::bend` and `::blur` scale every material's
+  refraction and frost (1 as designed, 0 to 3); `Appearance::tint` colours every glass that
+  has no tint of its own (about 0.25 at the default transparency, 0.75 at Tinted, never a
+  lens). Web: `setAppearance({ bend, blur, tint })`; layer settings `bend`, `blur`, `tint`;
+  kit `GlassLayer bend glassBlur tint`. Labels on a strongly tinted face take the ink of the
+  tint (`inkOn`), so text stays readable; CSS glass that is frosted or fully tinted follows
+  the scheme.
+- **Lenses stay clear** under Reduce Transparency (`Material::lens`, `Material::dome`): it
+  frosts and fills every other glass, never a held knob over its own track.
+- **Bad input absorbed:** 0 × 0 frames skipped, NaN dt = 0, springs at huge values still rest.
 
 ## Frame contract
 
-- `content` and `target` are different textures of the same size. `content` must be readable
-  as linear colour: an sRGB view (`Rgba8UnormSrgb` / `Bgra8UnormSrgb`) or a float format.
-  On the web, configure the canvas with `viewFormats: ["bgra8unorm-srgb"]` and render through
-  that view (the wasm wrapper does this).
-- Set `content_changed: false` while the content holds still: its blur pyramid is built once
-  for the whole screen and reused wherever the glass moves, including under glass on glass.
-- The scene is in points, top-left origin. `Frame::scale` converts points to pixels.
-- Draw glyphs and labels after `render`, with vibrancy (additive / plus-lighter for light text,
-  multiply / plus-darker for dark text). Don't put glass on glass for that.
+- `content` and `target`: different textures, same size. `content` readable as linear colour
+  (an `*Srgb` view or float). On the web the wasm binding configures this.
+- `content_changed: false` while content holds still: its blur is built once for the whole
+  screen and reused wherever glass moves.
+- `overlay: true`: only the glass, on a transparent target (a canvas over a page).
+- Points, top-left origin; `Frame::scale` = pixels per point.
+- Draw labels after `render`, with vibrancy, coloured from `ink_of`.
 
-## What it does that the old `liquid-claude` didn't
+## Tokens
 
-| liquid-claude | Liquid Rust |
-|---|---|
-| Explicit Euler springs plus constant friction, so results depend on frame rate and jitter | Closed-form damped springs; same curve at 60/120/165 Hz; interruptible |
-| Circle-radius collision pushes between pills ("buggy physics") | No collisions. Merge and split come from the SDF smooth union, as Apple does it |
-| Full-screen pass looping 24 pills per pixel | One instanced quad per merged group; loops only that group's shapes |
-| `dFdx` normals on the smooth union (2×2-quad noise) | Analytic gradient through the smooth union, diagonal-softened |
-| 5-tap blur re-sampling a procedural background | Shared blur pyramid, B-spline continuous radius, region-limited, cached |
-| Uniform white rim + sine shimmer | Kit-calibrated lit line (light angle, splay), inner rims, iOS 27 burn edge |
-| Tint = `glass × tint` | OKLab stained glass that follows backdrop lightness |
-| One material per blob | Per-shape materials blended across the liquid neck |
-| Alpha-ish fades | Materialize by ramping lensing; neighbours grow out of each other |
-| Glass on glass not handled | Correct layered backdrops, rebuilt only where layers overlap, or Apple's no-sampling mode |
+`cargo run --example export_tokens --no-default-features -- out/` writes `tokens.css` /
+`tokens.ts`: every motion as a CSS `linear()` easing with its settle time, the feel numbers,
+each glass kind as blur, plain-fill face and shadow. CSS that animates beside the engine
+stays in step.
 
-## Tuning recipes
+## Recipes
 
-- **Apple Control Center tile:** `Material::clear()` at 70×70 or 155×155 with `Rounded(30)`,
-  over a dimmed background (35 % black plus blur under the whole panel).
-- **Dock / tab bar over a wallpaper:** `Material::clear_bar()` with `Rounded(38)` at 103 pt height.
-- **Toolbar cluster:** `Material::regular()` capsules 44–52 pt in a container whose spacing is
-  larger than the gap between them, so they share one liquid body. A tinted primary button can
-  sit in the same container: it keeps its tint while fused.
-- **Primary action becoming available:** add it as `regular()`, then
-  `set_material_with(id, Material::tinted(Color::BLUE), Spring::new(0.3, 0.0))`.
-- **Menu from a button:** `expand_from(button, menu_glass, Spring::new(0.5, 0.2))` (same
-  container, starts fused and with the button's outline), close with
-  `collapse_into(menu, button, Spring::new(0.35, 0.0))`. End the gap at least the full spacing
-  away for a clean split. Set `glass_on_glass = false` if the menu overlaps other glass.
-- **Search bar opening into results:** same as the menu, with a `Rounded(28)` results panel.
-  Clip the results list to `current_frame` / `current_corner` so content ends exactly where
-  the glass does mid-morph.
-- **Slider knob / tab selection lens:** `.lens()` glass at a higher z than the track. It lifts
-  ×1.3 and stretches with velocity while dragged. If you want Apple's resting state (a plain
-  fill), drop it back to a fill when released.
-- **Matching a Figma design:** copy Refraction/100, Depth, Dispersion/100, Frost, Splay/100
-  and Light% into `Material`. Copy fills into `Tone`, and shadows into `Shadow` / `edge` / `rim`.
+- **Control Center tile:** `clear()`, 70×70 or 155×155, `Rounded(30)`, over 35 % dim + blur.
+- **Dock / tab bar over a wallpaper:** `dock()`, `Rounded(38)`, 103 pt.
+- **Toolbar cluster:** `regular()` capsules in one container, spacing larger than their gaps.
+- **Primary action becoming available:** add `regular()`, fade to `tinted` with `set_material_with`.
+- **Menu from a button:** `kit::Menu::open` (or `morph_from` + `shrink_into`).
+- **Search bar into results:** `expand_from` / `collapse_into`; clip results to `content_of`.
+- **Figma design:** Refraction/100, Depth, Dispersion/100, Frost, Splay/100, Light % →
+  `Material`; fills → `Tone`; shadows → `Shadow`, `edge`, `rim`.
 
 ## Numbers
 
-- 0.7 ms per frame over static content, 0.8 ms over content that changes every frame, at
-  1206×2622 for 8 groups with merging and a glass-on-glass layer (RTX 3060 Ti). Recording a
-  frame costs about 64 µs of CPU: buffers are written only when they change and bind groups
-  are kept across frames.
-- Tests: springs (frame-rate independence, overshoot, runaway bounce, large values coming to
-  rest), materials (slider faces, fades), scene (hit-test, drag, stretch, reduce motion,
-  physics off, expand/collapse), clustering, GPU render tests (compositing contract, stacked
-  layers, backdrop cache, fused materials; skipped without an adapter) and naga validation of
-  both shaders. Clippy is clean on native and wasm.
-- `snapshot` example modes: `lock`, `home` (Apple kit positions for A/B comparison),
-  `corners`, `showcase`, `press`, `search`, `bench` (`LIQUID_BENCH_FRAMES` lowers the frame
-  count on software renderers).
+- 0.7–0.8 ms a frame at 1206×2622, 8 groups, merging and a glass-on-glass layer (RTX 3060 Ti);
+  idle = 0 frames.
+- Tests: 155 unit (springs, materials, scene, input and lean, legibility, kit, masks),
+  22 GPU (compositing contract, layers, caches, fused materials, mask glass; skipped without
+  an adapter), naga on both shaders, 28 doc tests. Clippy clean native and wasm.
+- `snapshot` example modes: `lock`, `home`, `corners`, `showcase`, `press`, `search`, `bench`,
+  `mask`. `swatch`: one material over an image.

@@ -69,6 +69,30 @@ you get Apple's corner, so there's no need for exact Bézier distance.
 To stretch a lens being dragged, rotate into the velocity frame,
 divide the coordinates by `(1+s, 1/(1+s))`, and multiply the distance by `min(scale)`.
 
+**Any silhouette (mask glass).** Bake the shape's alpha once into a square field (512 texels):
+an exact Euclidean distance transform of the inside and of the outside (Felzenszwalb and
+Huttenlocher), partly covered texels set from their coverage (`0.5 - alpha`), a 3×3 box blur
+to take the staircase out of the normals, normals by central differences. Store
+`(distance in texels, nx, ny)` in an `Rgba16Float` array layer (filterable everywhere). Fit
+the mask into the box with its aspect kept; beyond its square add the way out:
+
+```wgsl
+fn sdg_mask(p: vec2f, half: vec2f, layer: i32) -> vec3f {
+    let side = 2.0 * max(half.x, half.y);
+    let uv = p / side + 0.5;
+    let inside = clamp(uv, vec2f(0.0), vec2f(1.0));
+    let t = textureSampleLevel(masks, samp, inside, layer, 0.0);   // level 0: legal in any branch
+    let beyond = (uv - inside) * side;
+    let out = length(beyond);
+    var n = t.yz;
+    if out > 0.0 { n = beyond / out; }
+    return vec3f(t.x * side / f32(textureDimensions(masks).x) + out, n / max(length(n), 1e-4));
+}
+```
+
+Cap the bevel depth at the mask's own deepest inside distance, or the "flat top" never
+starts. The smooth union, shadows and light work unchanged on top of it.
+
 ## 2. Liquid merge: smooth union with the gradient (Quilez)
 
 ```wgsl
@@ -94,19 +118,31 @@ fn smin_g(a: vec3f, b: vec3f, k: f32) -> vec3f {
 Bevel width = **depth** (Figma *Depth*, in points), clamped to the shape's half-size.
 `t = clamp(-d / depth, 0, 1)` runs from 0 at the rim to 1 where the flat top starts.
 
-Use Apple's squircle profile `h(t) = (1 - (1-t)^4)^(1/4)`, whose slope is
+Use the profile `h(t) = (1 - (1-t)^n)^(1/n)`. **n = 4** (a squircle) is flat almost to the
+edge and bends only a thin rim: Regular glass. **n = 2** (a quarter circle) curves from far
+in, so a wide band shows the backdrop squeezed and, at the very rim, mirrored: Clear glass and
+the Dock as iOS 27 devices draw them (about 14–16 pt deep on a widget or the Dock) [M2].
+Its slope:
 
+```wgsl
+fn bevel_slope(t: f32, n: f32) -> f32 {          // n clamped to 1.5..8
+    let u = 1.0 - t;
+    let un = pow(u, n);
+    return (un / max(u, 1e-5)) * pow(max(1.0 - un, 1e-5), 1.0 / n - 1.0);
+}
 ```
-h'(t) = (1-t)^3 · (1 - (1-t)^4)^(-3/4)
-```
+
+Blend `n` across a liquid neck like any other material value.
 
 Treat it as a vertical ray hitting a surface tilted by θ = atan(h'), refracted with η = 1.5,
 travelling one glass thickness:
 
 ```wgsl
 fn refract_offset(slope: f32, eta: f32) -> f32 {
-    let s = slope / sqrt(1.0 + slope * slope);
-    return tan(asin(s) - asin(s / eta));          // 1.117 at the rim for η = 1.5
+    // atan, not asin(slope / sqrt(1 + slope²)): at the very rim the slope is ~5600 and that
+    // ratio rounds above 1, asin returns NaN and the rim draws black pixels.
+    let theta = atan(slope);
+    return tan(theta - asin(clamp(sin(theta) / eta, -1.0, 1.0)));   // 1.117 at the rim, η = 1.5
 }
 offset = refraction × depth × refract_offset(h'(t), η)       // Figma Refraction 0..1
 sample = p - n × offset                                      // pull from further inside
@@ -266,3 +302,7 @@ Mobile guidance:
 | Colour fringe in the centre | dispersion not restricted to the bevel |
 | Washed-out results on the web | writing linear colour to a `bgra8unorm` canvas: render through a `-srgb` view |
 | Glass flickers light/dark | sampled a fine level for adaptivity: use the coarsest level at the group centre |
+| Black pixels on the very rim | `asin(slope / sqrt(1 + slope²))` rounding above 1 at huge slopes: use `atan` (§3) |
+| Clear glass looks heavily frosted on Windows | the browser reports `prefers-reduced-transparency` because Windows Transparency effects are off: that is the Reduce Transparency form; offer an override |
+| Clear glass looks like Regular with less blur | squircle profile (n = 4): Clear bends from far in, use n = 2 (§3) |
+| Mask glass has a lumpy rim | normals from a raw distance transform: blur the field 3×3 before taking gradients |

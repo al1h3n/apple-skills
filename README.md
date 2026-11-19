@@ -2,83 +2,64 @@
 
 [![skills.sh](https://skills.sh/b/al1h3n/apple-skills)](https://skills.sh/al1h3n/apple-skills)
 
-A curated collection of production-grade agent skills for Apple Human Interface Guidelines (HIG), iOS interface design, and Apple's Liquid Glass material system.
+Three agent skills for building Apple-grade interfaces: the craft, the iPhone and iPad specifics, and the Liquid Glass material. Current as of iOS, iPadOS and macOS 27; version 26 is kept as version files, and a template is ready for 28.
 
-Compatible with [skills.sh](https://skills.sh) and all modern AI coding agents, including **Claude Code**, **OpenCode**, **Cursor**, **Codex**, **Windsurf**, and **Antigravity**.
+Works with [skills.sh](https://skills.sh) and agents that read skills: Claude Code, OpenCode, Cursor, Codex, Windsurf, Antigravity.
 
----
+## Skills
 
-## Skills Catalog
-
-| Skill Name | Description | Key Focus |
+| Skill | Responsibility | Load it for |
 |---|---|---|
-| `liquid-glass` | Apple Liquid Glass design system (iOS/iPadOS/macOS 26–27) | SwiftUI `glassEffect` APIs, WGSL/WebGPU shaders, Snell refraction, squircle SDF, rim lighting, analytic springs |
-| `ios` | iOS Human Interface Guidelines & mobile app patterns | Dynamic Type ramp, 8 pt rhythm, ≥ 44 pt touch targets, continuous squircles, sheets, navigation, accessibility |
-| `apple-ui` | Apple-grade product UI & high-converting marketing pages | Restraint & hierarchy, SF typography licensing, copywriting, dark/light semantic colors, landing pages |
+| `apple-ui` | Craft shared by every platform, plus macOS | hierarchy, typography, spacing, colour, motion principles, copy, landing pages, AI assistant UI, review checklist, Mac windows / toolbars / menus |
+| `ios` | iPhone and iPad only | choosing components, navigation structure, Dynamic Type, gestures, widgets, Lock Screen, Control Center, notifications |
+| `liquid-glass` | The material | layer stacks and exact kit values, design rules, per-component glass spec, measured motion, icons, SwiftUI / UIKit / AppKit APIs, shader maths, the Liquid Rust engine and its Svelte package |
 
----
+They are split by responsibility: each fact lives in one file and the others link to it. `ios` expects `apple-ui` and `liquid-glass` to be installed.
 
-## Quick Installation
+## Where the numbers come from
 
-You can install any skill globally (`-g`) or for your current project using `bunx` or `npx`:
+- **Apple's Figma libraries** (iOS and iPadOS 26 and 27, macOS 26 and 27), every component read node by node.
+- **Eight screen recordings** of iOS 26 and 27, measured frame by frame (press, bars, switch, banners, the assistant, Control Center, app open and close).
+- **Apple's documentation and sessions** (HIG, WWDC25, WWDC26).
 
-### 1. Install via Bun (`bunx`)
+Every number in the skills carries a tag saying which of these it rests on. See `skills/liquid-glass/references/sources.md`.
+
+## Install
 
 ```bash
-# Install Liquid Glass skill to Claude Code and OpenCode globally
-bunx --yes skills add al1h3n/apple-skills -s liquid-glass -g -y -a claude-code opencode
-
-# Install iOS skill to Claude Code and OpenCode globally
-bunx --yes skills add al1h3n/apple-skills -s ios -g -y -a claude-code opencode
-
-# Install Apple UI skill to Claude Code and OpenCode globally
-bunx --yes skills add al1h3n/apple-skills -s apple-ui -g -y -a claude-code opencode
-
-# Install all skills in this repository
 bunx --yes skills add al1h3n/apple-skills --all -g
 ```
 
-### 2. Install via npm (`npx`)
+One skill, chosen agents:
 
 ```bash
-# Install specific skill
 npx skills add al1h3n/apple-skills -s liquid-glass -g -y -a claude-code opencode
-npx skills add al1h3n/apple-skills -s ios -g -y -a claude-code opencode
-npx skills add al1h3n/apple-skills -s apple-ui -g -y -a claude-code opencode
 ```
 
----
+Agent locations: Claude Code `~/.claude/skills/<skill>`, OpenCode `~/.config/opencode/skills/<skill>`, Cursor `.cursor/skills`, Codex `.codex/skills`, Windsurf `.windsurf/skills`.
 
-## Supported AI Agents
-
-The skills CLI installs configuration directly into the respective agent locations:
-
-- **Claude Code**: `~/.claude/skills/<skill-name>`
-- **OpenCode**: `~/.config/opencode/skills/<skill-name>` (and universal `.agents/skills`)
-- **Cursor**: `.cursor/skills`
-- **Codex**: `.codex/skills`
-- **Windsurf**: `.windsurf/skills`
-- **Antigravity**: Workspace and global skill paths
-
----
-
-## Repository Structure
+## Layout
 
 ```
-.
-├── skills.sh.json               # skills.sh catalog & grouping definition
-├── README.md                    # Installation and documentation
-├── skills/                      # Canonical skills directory (skills.sh standard)
-│   ├── liquid-glass/            # Apple Liquid Glass material & shader skill
-│   │   ├── SKILL.md
-│   │   ├── assets/              # WGSL WebGPU shaders
-│   │   └── references/          # Math, anatomy, SwiftUI APIs, Liquid Rust
-│   ├── ios/                     # iOS HIG mobile pattern skill
-│   │   ├── SKILL.md
-│   │   └── references/          # Typography ramp, 8pt grid, touch targets
-│   └── apple-ui/                # Apple UI & product marketing skill
-│       ├── SKILL.md
-│       └── references/          # Focus, hierarchy, copywriting, checklists
-├── liquid-glass-skill/          # Root package (backward-compatibility)
-└── apple-ui-skill/              # Root package (backward-compatibility)
+skills.sh.json
+skills/
+  apple-ui/
+    SKILL.md
+    references/      focus-and-hierarchy, typography, layout-and-spacing, color-and-materials,
+                     motion-principles, copywriting, marketing-pages, ai-assistant-ui, macos,
+                     review-checklist, figma-workflow, versions/26, versions/27
+  ios/
+    SKILL.md
+    references/      components, navigation, dynamic-type, gestures-and-motion,
+                     widgets-and-system, versions/26, versions/27, versions/_template
+  liquid-glass/
+    SKILL.md
+    assets/          glass.wgsl, pyramid.wgsl
+    references/      principles, anatomy, design-rules, components, motion, effects, icons,
+                     native-apple, shader-math, webgpu, liquid-rust, bits-ui, sources,
+                     versions/26, versions/27, versions/_template
 ```
+
+## When a new OS ships
+
+The files outside `versions/` describe only the newest OS. To add one: copy `versions/_template.md` in each skill, measure the same situations again, move what changed into the previous version's file, and update the current files. The steps are written in `skills/liquid-glass/references/versions/_template.md`.

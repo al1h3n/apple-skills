@@ -1,220 +1,186 @@
 # Liquid Glass on the Web (WebGPU, 2026)
 
-You can't get real Liquid Glass from CSS alone. It needs a GPU pass that reads the pixels
-*behind* the glass. Pick a path:
+Real Liquid Glass needs a GPU pass that reads the pixels *behind* the glass; CSS alone only
+approximates it. Pick a path:
 
 | Path | When | Status |
 |---|---|---|
-| **A. Liquid Rust → wasm** | You can ship a ~1 MB wasm, or the page is a canvas app | Tested: `liquid-rust/web` 0.2.5 (wasm-pack, WebGPU) |
-| **B. Raw WebGPU + `assets/*.wgsl`** | Pure JS / TS stack, no wasm | Same shaders; port `renderer.rs` packing (§3) |
-| **C. three.js WebGPURenderer / TSL** | Already in a three.js scene | Port the maths in `shader-math.md` to TSL nodes |
-| **D. CSS fallback** | WebGPU missing, or for DOM chrome where you can't capture the backdrop | §5. An approximation only |
+| **A. `liquid-rust-web`** | Any web app. Svelte / SolidJS: its kits (`bits-ui.md`); anything else: its framework-free API | Tested: liquid-rust 0.3.0, Chrome / Edge / WebView2 with WebGPU, CSS fallback elsewhere |
+| **B. Raw WebGPU + `assets/*.wgsl`** | A JS / TS renderer of your own, no wasm | Same shaders; port the packing (§3) |
+| **C. three.js WebGPURenderer / TSL** | Already in a three.js scene | Port `shader-math.md` to TSL nodes |
+| **D. CSS only** | No WebGPU, or glass over live HTML | §5. `liquid-rust-web` does this for you as its CSS renderer |
 
-WebGPU availability in 2026: Chrome/Edge 113+ (desktop and Android), Safari 26+ (macOS, iOS,
-iPadOS, visionOS), Firefox 141+ on Windows and later on more platforms. Always feature-detect
-`navigator.gpu` and fall back to D.
+WebGPU in 2026: Chrome / Edge 113+ (desktop, Android), Safari 26+ (macOS, iOS, iPadOS,
+visionOS), Firefox 141+ on Windows, more later. Feature-detect `navigator.gpu` **and** a
+device: headless browsers often have the API but no device.
 
-## 1. Getting the backdrop into a texture
+## 1. The backdrop
 
-The glass can only refract what you give it.
+Glass refracts only the picture you give it.
 
-| Backdrop | API |
+| Backdrop | How |
 |---|---|
-| Your own canvas/WebGPU scene | render it into a texture with `TEXTURE_BINDING` (best) |
-| Image | `createImageBitmap(blob, {resizeWidth, resizeHeight})` → `queue.copyExternalImageToTexture` |
-| Video | `device.importExternalTexture({source: video})` per frame (zero-copy), or copy per frame |
-| Live DOM | **HTML-in-Canvas** (Chrome origin trial through 160, planned default ~157). Put `<canvas content="drawable">` (earlier builds: `layoutsubtree`) around the DOM, then call `queue.drawElementImageToTexture({source: el, …}, {texture, size})` in the canvas `paint` event (older builds: `copyElementImageToTexture`). The API is still moving, so feature-detect both names |
-| Arbitrary DOM, no HTML-in-Canvas | snapshot with html2canvas (static) or keep the glass over a canvas-rendered region only |
+| Your own canvas / WebGPU scene / map | hand the canvas over; redraw the glass when it draws (`layer.wake()`) |
+| Image | an address or an `<img>`; decoded once, blur built once |
+| Video | the `<video>` element; copied per frame while it plays |
+| Something you paint | a painter `(context, width, height) => void`, cached per size |
+| Live DOM | **HTML-in-Canvas** (`<canvas content="drawable">` / `layoutsubtree`, then `drawElementImageToTexture`, older `copyElementImageToTexture`; Chrome origin trial, stable 157): feature-detect both names. Otherwise put the picture in the backdrop and the HTML on top |
 
-Set `content_changed` / re-upload only when the backdrop really changes. With a static
-wallpaper the blur pyramid is built once.
+Re-upload only when the backdrop really changes: still content is blurred once for the
+whole screen and reused wherever glass moves.
 
-## 2. Path A: Liquid Rust in the browser (recommended)
+## 2. Path A: `liquid-rust-web`
 
 ```bash
-git clone https://github.com/al1h3n/liquid-rust && cd liquid-rust/web
-wasm-pack build --target web --release
-python -m http.server
+pnpm add github:al1h3n/liquid-rust#path:/js        # the npm package liquid-rust-web
 ```
 
-Then open `/index.html?bg=img.png`. The JS API (see `web/index.html`):
+```ts
+import { createLayer, glass, SwitchDriver } from 'liquid-rust-web';
+import 'liquid-rust-web/glass.css';
 
-```js
-import init, { LiquidGlass } from "./pkg/liquid_rust_web.js";
-await init();
-canvas.width = innerWidth * devicePixelRatio; canvas.height = innerHeight * devicePixelRatio;
-const bmp = await createImageBitmap(blob, { resizeWidth: canvas.width, resizeHeight: canvas.height });
-const glass = await LiquidGlass.create(canvas, bmp, devicePixelRatio);
-
-const bar = glass.addContainer(14, 0);                       // spacing (CSS px), z
-glass.add(24, 24, 52, 52, -1, "regular", 0, true, false, bar, 0);   // x,y,w,h, radius(-1 capsule), material, tint, interactive, lens, container, z
-glass.add(300, 24, 110, 52, -1, "tinted", 0x0088ff, true, false, -1, 0);
-glass.setAppearance(0.5, false, false, false, matchMedia("(prefers-reduced-motion: reduce)").matches);
-
-// Morphs and menus (handles are the numbers add/expandFrom return):
-const menu = glass.expandFrom(0, 24, 90, 250, 300, 28, "regular", 0);  // source, x,y,w,h, radius, material, tint
-glass.collapseInto(menu, 0);                                 // back into glass 0, then dropped
-glass.setFrame(1, 300, 90, 110, 52); glass.remove(1);
-glass.setContainerSpacing(bar, 20);                          // 0 = no merging
-glass.setPhysics(false);                                     // changes land instantly
-glass.setLightAngle(45);
-
-let running = false, last = 0;
-const tick = t => { const dt = (t - last) / 1000; last = t; running = glass.frame(dt); if (running) requestAnimationFrame(tick); };
-const wake = () => { if (!running) { running = true; last = performance.now(); requestAnimationFrame(tick); } };
-canvas.onpointerdown = e => { glass.pointerDown(e.clientX, e.clientY); wake(); };
-canvas.onpointermove = e => { glass.pointerMove(e.clientX, e.clientY); wake(); };
-canvas.onpointerup   = () => { glass.pointerUp(); wake(); };
-wake();
+const { layer, top } = createLayer(document.querySelector('#stage')!, { backdrop: '/wallpaper.jpg', scheme: 'auto' });
+const share = glass(layer, document.querySelector('#share')!, { kind: 'control', role: 'control' });
+glass(layer, document.querySelector('#menu')!, { kind: 'panel', from: share });   // grows out of it
+layer.configure({ reduceTransparency: 'off' });  // 'system' | 'on' | 'off'; same for reduceMotion, increaseContrast
+layer.setView({ zoom: 1.1, blur: 8, dim: 0.2 }, 0.1);   // the backdrop steps back (an app opening)
 ```
 
-The wrapper doesn't expose `set_material_with`, `place`, `glass_on_glass` or
-`adapt_to_content` yet; add a method to `web/src/lib.rs` when a page needs one.
+What the core does: one WebGPU device and canvas per layer, every glass element synced to the
+engine (resize, mutation, scroll, transitions, WAAPI, CSS transforms), pointers routed with
+capture, labels coloured from the engine's ink, CSS renderer when the engine cannot run (the
+layer says why: `layer.failure`), accessibility media queries with per-setting overrides,
+tokens (`motions`, `glassKinds`) and drivers for switches, sliders, selections, sheets,
+banners, swipe actions, a calendar, Genie and Dock magnification.
 
-Canvas colour: canvases are `bgra8unorm`. Configure them with
-`viewFormats: ["bgra8unorm-srgb"]` and render through the `-srgb` view. The shader outputs
-linear light. The wasm wrapper already does this.
+The engine alone, for a canvas app:
 
-Map accessibility media queries:
-- `prefers-reduced-transparency: reduce` → transparency 1 (or the reduce-transparency flag)
-- `prefers-contrast: more` → increase contrast
-- `prefers-reduced-motion: reduce` → reduce motion
-- `prefers-color-scheme: dark` → dark
+```ts
+import { createEngine } from 'liquid-rust-web';
+const result = await createEngine(canvas, devicePixelRatio, /* overlay */ false);
+if (!result.ok) console.log(result.failure.reason);        // 'unsupported' | 'failed'
+const engine = result.engine;
+engine.setContent(image);                                 // image, canvas or video
+const bar = engine.addContainer(16, 0);
+const id = engine.add({ x: 24, y: 24, width: 44, height: 44, material: 'regular', role: 'control', container: bar });
+// per frame: engine.update(dt) -> moving; engine.draw(); engine.readBackdrop()
+```
+
+Vite: `optimizeDeps: { exclude: ['liquid-rust-web'] }` (the wasm sits next to its module).
+Size: about 290 KB of wasm, 120 KB gzipped; load it lazily when glass is optional.
+
+Canvas colour: canvases are `bgra8unorm`; the binding renders through a `-srgb` view so the
+shader's linear output is encoded. Overlay mode (`overlay: true`) draws only the glass, with
+premultiplied alpha, on a transparent canvas above a page.
+
+Windows note: with Transparency effects off, Chromium reports
+`prefers-reduced-transparency: reduce` and the glass is drawn frosted. Offer an override.
 
 ## 3. Path B: raw WebGPU with the shared WGSL
 
-Use `assets/glass.wgsl` and `assets/pyramid.wgsl` unchanged (synced with liquid-rust 0.2.5).
-Recreate the host from `liquid-rust/src/renderer.rs`.
+Use `assets/glass.wgsl` and `assets/pyramid.wgsl` unchanged (synced with liquid-rust 0.3.0)
+and port `liquid-rust/src/render/{pack,renderer,pyramid}.rs`.
 
-**Pipelines** (`layout: "auto"`):
-- `vs_glass` / `fs_glass`: triangle-strip, 4 vertices × N instances, premultiplied blending
-  (`src: one, dst: one-minus-src-alpha`).
-- `vs_full` / `fs_down_first`, `fs_down`: target `rgba16float`, no blend.
-- `vs_full` / `fs_blit`: your target format.
+**Pipelines** (`layout: "auto"`): `vs_glass` / `fs_glass` triangle strip, 4 vertices × N
+instances, premultiplied blending (`one`, `one-minus-src-alpha`); `vs_full` / `fs_down_first`,
+`fs_down` into `rgba16float`; `vs_full` / `fs_blit` into your target.
 
-**Bindings** (group 0): 0 `Globals` uniform, 1 `shapes`, 2 `groups`, 3 sampler, 4 backdrop
-texture, 5 pyramid texture, 6 `materials` (all storage buffers read-only).
-
-**Buffers** (std430, every field a vec4, all little-endian f32 except `info`):
+**Bindings** (group 0): 0 `Globals` uniform, 1 `shapes`, 2 `groups`, 3 sampler (linear,
+clamp), 4 backdrop, 5 pyramid, 6 `materials` (storage, read-only), 7 `masks`
+(`texture_2d_array<f32>`, `Rgba16Float`; one blank 1×1 layer when there are none, viewed as
+an array even then).
 
 ```
-Globals  (uniform, 64 B):   viewport[w,h,1/w,1/h]  misc[pxPerPt, pyramidLevels, scheme(1 light), 0]
-                            light[sin a, -cos a, 0, 0]  touch[x px, y px, radius px, intensity]
-Shape    (storage, 64 B):   center_half[cx,cy,hx,hy px]  params[radius px, shrink px, axisX, axisY]
-                            stretch[along, 1/along, cornerExponent, 0]  extra[bevel depth px, 0, 0, 0]
-Group    (storage, 48 B):   bounds[x0,y0,x1,y1 px]  info(u32)[firstShape, count, blend, 0]
-                            geo[k px, presence, press, 0]
-Material (storage, 144 B):  optics[refraction, adapt, dispersion, frostσ px]
-  one per shape,            lighting[splay, specular, rim, rimShade]  edge[hairline, edgeBurn, contrast, dim]
-  same index as `shapes`    shadow[offsetY px, σ px, opacity, 0]
-                            light_a[lift, luminance, lumMix, lighten]  light_b[darkenTo, darken, 0, 0]
-                            dark_a, dark_b (same)  tint[OKLab L, a, b, strength]
+Globals  (64 B):   viewport[w,h,1/w,1/h]  misc[pxPerPt, pyramidLevels, 0, 0]
+                   light[sin a, -cos a, 0, 0]  touch[x px, y px, radius px, intensity]
+Shape    (64 B):   center_half[cx,cy,hx,hy px]  params[corner extent px, shrink px, axisX, axisY]
+                   stretch[along, 1/along, corner exponent, 0]
+                   extra[bevel depth px, knob face, bevel profile n, mask layer + 1 (0 = box)]
+Group    (48 B):   bounds[x0,y0,x1,y1 px]  info(u32)[firstShape, count, blend, 0]  geo[k px, presence, press, 0]
+Material (144 B):  optics[refraction, face (0 dark..1 light), dispersion, frost σ px]
+  one per shape    lighting[splay, specular, rim, rimShade]  edge[hairline, edgeBurn, contrast, dim]
+                   shadow[offsetY px, σ px, opacity, body zoom]
+                   light_a[lift, luminance, lumMix, lighten]  light_b[darkenTo, darken, 0, 0]
+                   dark_a, dark_b (same)  tint[r, g, b (sRGB-encoded), strength]
 ```
 
-Each shape's material is resolved for that shape's own size. `blend` is 1 when a group's
-members have different materials; the shader then mixes them across the liquid neck with the
-smooth-min weights it uses for the outline. Write 0 when every member shares one material
-(a row of equal buttons) so the shader skips the material loads. (Before 0.2.5 the group carried a 192 B thin/thick material pair and no
-binding 6; update hosts ported from that layout.)
+`blend` = 1 when a group's members have different materials (mixed across the neck with the
+smooth-min weights); 0 skips the loads. Effects are pre-multiplied by presence on the CPU.
 
-Effects are pre-multiplied by presence on the CPU, so materialize needs no alpha.
+**Per frame:** blit content → target; build the pyramid (scissored to the glass while the
+content changes, once for the whole screen while it holds still); `draw(4, groupCount)` per
+z-layer; glass on glass: `shader-math.md` §9.
 
-**Per frame**:
-1. Blit content → target.
-2. If the content changed, build the pyramid: mip i from mip i−1, scissored to the glass region.
-   If it didn't, build it once for the whole screen and reuse it wherever the glass moves.
-3. `drawIndexed`-free `draw(4, groupCount)` per z-layer.
-4. Glass on glass: see `shader-math.md` §9.
+**CPU side:** springs (`motion.md`), union-find clustering on the container spacing,
+per-shape material resolve (size thickness, transparency slider, accessibility),
+legibility (`liquid-rust/src/scene/legibility.rs`), no `writeBuffer` for unchanged bytes,
+bind groups kept across frames.
 
-**CPU side** (port it or call the wasm):
-- springs: `motion.md`
-- clustering with union-find on the container spacing
-- material resolve per shape, which includes size thickness τ, the transparency slider and accessibility
-- skip `queue.writeBuffer` when a buffer's bytes didn't change, and keep bind groups across
-  frames (each one is a JavaScript object on the web)
+## 4. Path C: three.js (WebGPURenderer)
 
-## 4. Path C: three.js (r17x+, WebGPURenderer)
+Render the scene into a `RenderTarget`, build a pyramid (generated mips are box-filtered:
+blockier frost unless you add the 13-tap pass), then an instanced quad whose `fragmentNode`
+implements `shader-math.md` §1–8 in TSL. Keep glass in an orthographic overlay scene.
 
-Render the scene to a `RenderTarget` first. Build the pyramid with mip-mapped
-`RenderTarget`s or `texture.generateMipmaps`. Generated mips are box-filtered, so expect a
-slightly blockier frost unless you add the 13-tap pass. Then draw a full-screen or instanced
-quad whose `fragmentNode` implements `shader-math.md` §1–8 with TSL (`Fn`, `smoothstep`,
-`texture(...).level()`). Keep the glass in an orthographic overlay scene.
+## 5. Path D: CSS
 
-## 5. Path D: CSS fallback
+`liquid-rust-web`'s CSS renderer, so you only write this by hand outside it:
 
-```css
-.glass {
-  /* Regular, light. Approximation: no bevel lensing, no liquid merge. */
-  background: rgb(255 255 255 / .55);
-  backdrop-filter: blur(8px) saturate(1.6);
-  border-radius: 999px;
-  box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / .9),      /* lit top rim   */
-    inset 0 -1px 0 rgb(255 255 255 / .35),    /* opposite rim  */
-    0 0 0 .5px rgb(0 0 0 / .18),              /* iOS 27 darkened edge */
-    0 8px 15px rgb(0 0 0 / .06);
-}
-.glass .label { mix-blend-mode: plus-darker; color: #1a1a1a; }   /* kit: LINEAR_BURN labels  */
-.glass.clear .label { mix-blend-mode: plus-lighter; color: #d9d9d9; } /* kit: LINEAR_DODGE glyphs */
-@media (prefers-reduced-transparency: reduce) { .glass { background: rgb(245 245 245 / .94); } }
-```
-
-**Squircle corners in CSS:**
-- `corner-shape` (CSS Borders 4) is available in Chrome/Edge 139+ and not yet in Safari or Firefox.
-- `superellipse(K)` draws a corner with exponent 2^K inside the `border-radius` box, and the
-  `squircle` keyword equals `superellipse(2)`, which is exponent **4**. That is *rounder-shouldered
-  than iOS*.
-- iOS (smoothing 60 % ≈ exponent 2.79 over 1.32 r) translates to
-  `border-radius: calc(1.32 * R); corner-shape: superellipse(1.48);`
-- Wrap it in `@supports (corner-shape: squircle)`. Elsewhere, fall back to `border-radius: R`
-  or to an SVG `clip-path` built with a Figma-squircle path generator.
-
-In Chromium only, `backdrop-filter: url(#lens)` with an SVG `feDisplacementMap` can add bevel
-refraction. Precompute the displacement map from the squircle profile (kube.io's method).
-Safari and Firefox ignore SVG backdrop filters, so treat this as progressive enhancement only.
-
-**Recipe that matches the shader** (BitsUILiquidGlass `refraction.ts`, used by AlmaSmart):
-- Map size = the element's CSS size; regenerate on `ResizeObserver`. For each pixel: signed
-  distance to the rounded rect, outward normal `n`, depth `t = clamp(−d / bevel, 0, 1)`,
-  offset `= refraction · bevel · tan(θ − asin(sin θ / 1.5))` with `θ = atan(slope(t))` and
-  `slope` from `h(t) = (1 − (1 − t)^4)^(1/4)`. Sample **inward**: `R = 0.5 − n.x·off/scale`,
-  `G = 0.5 − n.y·off/scale`, `scale = 2 · max offset`.
-- Filter: `feImage` (the map, `width`/`height` in px, `preserveAspectRatio="none"`) →
-  `feGaussianBlur` on `SourceGraphic` (`edgeMode="duplicate"`, the frost) → `feDisplacementMap`
-  → `feColorMatrix type="saturate"`, with `color-interpolation-filters="sRGB"` on the filter or
-  the map is read through a gamma curve and everything bends sideways.
-- Expose it as a custom property with a fallback, so one rule serves every engine:
-  `backdrop-filter: var(--lg-refract, blur(4px) saturate(1.6))`; set `--lg-refract: url(#id)`
-  only where `navigator.userAgentData.brands` names Chromium.
-- Only where the glass is visible: a knob's lens gets it while pressed (`:active`,
-  `[data-active]`), not at rest under an opaque white knob.
+- **Frost and tone:** `backdrop-filter: blur(σ) saturate(s)` with the kind's σ from the tokens
+  (`--lg-control-blur` 2.52 px, panel 6.72, clear 0.67, dock 0.42); a plain-fill face from
+  `--lg-<kind>-face-light|dark`; `box-shadow` from `--lg-<kind>-shadow-*`; an inset top and
+  bottom rim; a 0.5 px darkened outline (iOS 27 edge).
+- **Lens (Chromium only):** `backdrop-filter: url(#lens) …` with an SVG `feImage` displacement
+  map → `feGaussianBlur` → `feDisplacementMap` → `feColorMatrix saturate`, with
+  `color-interpolation-filters="sRGB"` (or everything bends sideways). The map: per pixel the
+  rounded-rect distance and normal, `t = clamp(−d / bevel, 0, 1)`, offset
+  `refraction · bevel · tan(θ − asin(sin θ / 1.5))`, `θ = atan(slope(t, n))` with the same
+  profile exponent as the shader (4 Regular, 2 Clear and Dock), sampled **inward**.
+  `lens()` in `liquid-rust-web` builds it. Safari and Firefox ignore SVG backdrop filters:
+  progressive enhancement only.
+- **Squircle corners:** `corner-shape` (Chrome / Edge 139+): iOS's 60 % smoothing ≈
+  `border-radius: calc(1.32 * R); corner-shape: superellipse(1.48)` inside
+  `@supports (corner-shape: squircle)`; elsewhere `border-radius: R`.
+- **Labels on glass:** `plus-darker` dark labels, `plus-lighter` light ones.
 
 ### Which path for which element
 
-WebGPU glass (Liquid Rust) refracts **one canvas** it copies (a map, a video); it can't see
-HTML. So: glass over a canvas → Liquid Rust; glass over HTML (a switch knob's lens over its
-track, a slider lens, a sheet over page content) → CSS with the recipe above; glass that
-follows a finger every frame (a Vaul sheet) → CSS on the element itself (WebGPU would trail a
-frame behind the DOM transform).
+Glass over a picture (wallpaper, map, video) → the engine. Glass over HTML (a knob's lens
+over its own track, a sheet over page text) → the engine still works if the HTML is drawn into
+the backdrop; otherwise the CSS renderer. Glass that follows a finger every frame stays
+synced: the core measures the element in the same frame.
 
-### Headless kits (Bits UI, Melt UI, Vaul)
+### Headless kits
 
-They render unstyled parts with state in data attributes, so glass is pure CSS keyed to them:
-`[data-state='checked']` (switch), `[data-active]` (slider thumb), `[data-state='open' |
-'closed']` (popover, menu, dialog: run the emerge/recede keyframes, Bits UI keeps the node
-mounted until the closing animation ends), `--bits-*-content-transform-origin` (grow out of
-the trigger), `[data-vaul-drawer]` (sheets). A ready preset: `BitsUILiquidGlass/liquid-glass.css`.
-A partial-height sheet (iOS 26/27) floats inset 8 pt with every corner rounded and is glass;
-at full height it is opaque and edge to edge.
+Bits UI and Kobalte expose state as attributes (`data-state`, `data-checked`,
+`data-expanded`, `data-selected`, `data-highlighted`); `liquid-rust-web`'s CSS keys on all of
+them, so both kits share one stylesheet. Keep content mounted through a closing morph
+(`forceMount`) so the surface can fold back into its control.
 
-## 6. Web-specific rules
+## 6. Web rules
 
-- Size the canvas in device pixels. Pass `devicePixelRatio` as the scale; scene units are CSS pixels.
-- Render on demand. Keep `requestAnimationFrame` running only while `frame()` reports motion,
-  or while the backdrop is a playing video or a scrolling canvas.
-- Pointer events go through `setPointerCapture`, and the canvas needs `touch-action: none`
-  so drags don't scroll the page.
-- Keep text in the DOM above the canvas for accessibility and selection. Give it vibrancy with
-  `mix-blend-mode`.
-- One canvas, one device. Don't create a WebGPU context per glass element.
+- Canvas in device pixels; scene units are CSS pixels; pass `devicePixelRatio` (capped, 2 is
+  plenty) as the scale.
+- Render on demand: the loop sleeps when nothing moves, unless the backdrop is a playing
+  video or a scrolling canvas.
+- Pointers through `setPointerCapture`; `touch-action: none` on draggable glass.
+- Text stays in the DOM above the canvas, for accessibility and selection.
+- One device per page where you can; never a context per glass element.
+- **Glass over DOM content is CSS.** The engine's canvas is under the page: an opaque element
+  (a window, a card) hides any engine glass under it, and engine glass cannot cover it. Glass
+  inside an opaque surface, and glass that floats over one (Spotlight, Control Center, menus
+  over a window), uses the CSS renderer (no layer in its context); it blurs what is really
+  under it.
+- **Portals wait for the layer.** A surface created before its layer has mounted must not
+  resolve its portal yet, or it lands in `<body>` and is placed against the browser window,
+  outside the layer (an alert pinned to the page's corner). Render the portal once
+  `layer.top` exists.
+- **Continuous corners in CSS.** `corner-shape: superellipse(1.6)` (Chrome 139+, inside
+  `@supports`) on every rounded rectangle of the page (windows, sheets, cards, rows, icon
+  tiles) so DOM outlines match the engine's squircle glass; never on capsules or circles.
+- **Scroll bars** as Apple draws them: a thin rounded thumb (11 px box, 3 px inset), no track,
+  no arrows (`::-webkit-scrollbar*`).
+- **Glass over page content** (a menu over a photo, an overlay over a window) is CSS glass: give
+  it no layer in its context. Engine glass refracts only the layer's backdrop.
+- **Clip the stage.** DOM content that leaves a stage keeps drawing; the canvas glass does not.
+  `overflow: clip` on the stage keeps both together; keep draggable demos inside it.

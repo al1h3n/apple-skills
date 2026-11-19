@@ -2,6 +2,10 @@
 // (Call of Duty: Advanced Warfare). Frost samples it with a B-spline at a continuous
 // level, so one pyramid serves every blur radius on screen.
 //
+// The pyramid holds display-encoded colour (gamma 2.2), not linear light: Apple's compositor
+// and Figma both blur encoded pixels, which is why dark text behind glass smears into a dark
+// smudge instead of thinning out. Matching them needs the same space.
+//
 // Alpha carries E[luminance^2] so glass can read local contrast (variance) for its
 // adaptive shadow; colour alpha of the backdrop is ignored (backdrops are opaque).
 
@@ -29,8 +33,9 @@ fn luminance(c: vec3f) -> f32 {
 fn tap(uv: vec2f, first: bool) -> vec4f {
     let c = textureSampleLevel(src, samp, uv, 0.0);
     if first {
-        let l = luminance(c.rgb);
-        return vec4f(c.rgb, l * l);
+        let encoded = pow(max(c.rgb, vec3f(0.0)), vec3f(1.0 / 2.2));
+        let l = luminance(encoded);
+        return vec4f(encoded, l * l);
     }
     return c;
 }
